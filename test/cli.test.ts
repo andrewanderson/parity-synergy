@@ -238,10 +238,34 @@ describe("cli", () => {
     const [header, ...rows] = result.stdout.split("\n");
     expect(header).toContain("opponent_name");
     expect(header).toContain("points_against");
+    // Both denominators of the headline, so a printed row reconciles.
+    expect(header).toContain("total_credit");
+    expect(header).toContain("weighted_points");
     expect(header).toContain("affected_delta");
-    expect(header).toContain("goal_delta");
-    expect(header).toContain("drop_delta");
+    // All eleven rules, none omitted: the breakdown sums to the headline.
+    for (const column of [
+      "goal_delta",
+      "assist_delta",
+      "second_assist_delta",
+      "defense_delta",
+      "hold_delta",
+      "break_delta",
+      "throw_away_delta",
+      "completion_delta",
+      "catch_delta",
+      "drop_delta",
+      "threw_drop_delta",
+    ]) {
+      expect(header).toContain(column);
+    }
     expect(rows.length).toBeGreaterThan(0);
+    // Every row carries those sixteen columns: identity, both sample sizes,
+    // the credit, the headline, and the eleven rule deltas.
+    const headerCells = header.split(/\s{2,}/);
+    expect(headerCells).toHaveLength(16);
+    for (const line of rows) {
+      expect(line.trim().split(/\s{2,}/)).toHaveLength(headerCells.length);
+    }
   });
 
   it("distinguishes an empty opponent result from a missing player", async () => {

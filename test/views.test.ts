@@ -87,11 +87,15 @@ type OpponentRow = {
   weighted_points: number;
   goal_delta: number;
   assist_delta: number;
+  second_assist_delta: number;
   defense_delta: number;
   hold_delta: number;
   break_delta: number;
   throw_away_delta: number;
+  completion_delta: number;
+  catch_delta: number;
   drop_delta: number;
+  threw_drop_delta: number;
 };
 
 type BaselineRow = { points: number; total: number; mean: number };
@@ -554,23 +558,68 @@ describe("opponent_effects view", () => {
     expect(row.total_credit).toBeCloseTo(totalCredit, 6);
     expect(row.affected_delta).toBeCloseTo(totalCredit / row.weighted_points, 6);
 
-    // The per-rule breakdown: weighted rule amount minus the rule's mean
-    // charged on every weighted point, in salary units.
+    // The per-rule breakdown: (weighted rule amount minus the rule's mean
+    // charged on every weighted point) divided by the weighted points, so
+    // each column is credit per weighted point like the headline.
     const weightedPoints = points.reduce((sum, p) => sum + p.weight, 0);
     const ruleDelta = (ruleName: string): number => {
       const weightedAmount = points.reduce(
         (sum, p) => sum + ruleAmount(p.point_id, justinId, ruleName) * p.weight,
         0,
       );
-      return weightedAmount - baselineMean(justinId, `salary:${ruleName}`) * weightedPoints;
+      return (
+        (weightedAmount - baselineMean(justinId, `salary:${ruleName}`) * weightedPoints) /
+        weightedPoints
+      );
     };
-    expect(row.hold_delta).toBeCloseTo(ruleDelta("HOLD"), 6);
     expect(row.goal_delta).toBeCloseTo(ruleDelta("GOAL"), 6);
+    expect(row.hold_delta).toBeCloseTo(ruleDelta("HOLD"), 6);
     expect(row.throw_away_delta).toBeCloseTo(ruleDelta("THROWAWAY"), 6);
     expect(row.drop_delta).toBeCloseTo(ruleDelta("DROP"), 6);
     expect(row.assist_delta).toBeCloseTo(ruleDelta("ASSIST"), 6);
+    expect(row.second_assist_delta).toBeCloseTo(ruleDelta("SECOND_ASSIST"), 6);
+    expect(row.completion_delta).toBeCloseTo(ruleDelta("COMPLETION"), 6);
+    expect(row.catch_delta).toBeCloseTo(ruleDelta("CATCH"), 6);
+    expect(row.threw_drop_delta).toBeCloseTo(ruleDelta("THREW_DROP"), 6);
     expect(row.defense_delta).toBeCloseTo(ruleDelta("DEFENSE"), 6);
     expect(row.break_delta).toBeCloseTo(ruleDelta("BREAK"), 6);
+  });
+
+  it("adds the eleven rule columns up to the headline on every row", () => {
+    // The printed report must reconcile by hand: the rule columns and the
+    // headline are all credit per weighted point, and the eleven salary
+    // rules partition the salary metric, so they sum to it. A rule left
+    // out of the view, or one column left in salary units, breaks this.
+    const rules = [
+      "goal",
+      "assist",
+      "second_assist",
+      "defense",
+      "hold",
+      "break",
+      "throw_away",
+      "completion",
+      "catch",
+      "drop",
+      "threw_drop",
+    ];
+    const rows = db.prepare("SELECT * FROM opponent_effects").all() as Array<
+      Record<string, number>
+    >;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const sum = rules.reduce((total, rule) => total + row[`${rule}_delta`], 0);
+      expect(sum).toBeCloseTo(row.affected_delta, 4);
+      if (row.weighted_points === 0) {
+        expect(row.affected_delta).toBe(0);
+        for (const rule of rules) expect(row[`${rule}_delta`]).toBe(0);
+      }
+    }
+
+    // Non-vacuous: the breakdown is a real share of the credit rather than
+    // a rounding of it, so the sum above is not trivially satisfied.
+    const withCredit = rows.filter((row) => row.weighted_points > 0);
+    expect(withCredit.length).toBeGreaterThan(0);
   });
 
   it("gives a negative affected_delta when the opponent suppressed the player", () => {

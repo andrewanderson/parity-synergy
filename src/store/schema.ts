@@ -212,8 +212,12 @@ FROM swapped;
 
 /**
  * The `opponent_effects` view: one row per directed opponent pair, with the
- * weighted mean credit on salary and its per-rule breakdown. The residual
- * reads `player_baselines.mean` at query time, so a newly ingested game
+ * weighted mean credit on salary and its per-rule breakdown. Every `*_delta`
+ * column is credit per weighted point, over the same weights, so the eleven
+ * rule columns add up to `affected_delta` and `total_credit` / `weighted_points`
+ * is the headline itself; both denominators are carried as columns so a
+ * reader can reconcile the printed figures by hand. The residual reads
+ * `player_baselines.mean` at query time, so a newly ingested game
  * changes every historical residual for its players without any stored
  * value being rewritten. SQLite has no `CREATE OR REPLACE VIEW`, so the
  * statement drops and recreates the view on every migrate.
@@ -252,20 +256,25 @@ credits AS (
   GROUP BY o.id_a, o.id_b
 ),
 rule_weighted AS (
-  -- Per-rule weighted amounts. The rule's baseline mean is charged on every
-  -- weighted point in the final SELECT (mean * weighted_points), so a point
-  -- where the player earned nothing of that rule still contributes
-  -- -mean * weight, exactly as the salary credit charges the salary mean
-  -- on every point. Summing the breakdown over all rules therefore
-  -- reproduces total_credit.
+  -- Per-rule weighted amounts, one column for each of the eleven salary
+  -- rules. The rule's baseline mean is charged on every weighted point in
+  -- deltas (mean * weighted_points), so a point where the player earned
+  -- nothing of that rule still contributes -mean * weight, exactly as the
+  -- salary credit charges the salary mean on every point. The eleven rules
+  -- partition the salary metric, so their per-point deltas add up to
+  -- affected_delta; leaving one out would break that identity.
   SELECT o.id_a, o.id_b,
          SUM(CASE WHEN sr.rule_name = 'GOAL' THEN sr.amount * o.weight ELSE 0 END) AS goal_weighted,
          SUM(CASE WHEN sr.rule_name = 'ASSIST' THEN sr.amount * o.weight ELSE 0 END) AS assist_weighted,
+         SUM(CASE WHEN sr.rule_name = 'SECOND_ASSIST' THEN sr.amount * o.weight ELSE 0 END) AS second_assist_weighted,
          SUM(CASE WHEN sr.rule_name = 'DEFENSE' THEN sr.amount * o.weight ELSE 0 END) AS defense_weighted,
          SUM(CASE WHEN sr.rule_name = 'HOLD' THEN sr.amount * o.weight ELSE 0 END) AS hold_weighted,
          SUM(CASE WHEN sr.rule_name = 'BREAK' THEN sr.amount * o.weight ELSE 0 END) AS break_weighted,
          SUM(CASE WHEN sr.rule_name = 'THROWAWAY' THEN sr.amount * o.weight ELSE 0 END) AS throw_away_weighted,
-         SUM(CASE WHEN sr.rule_name = 'DROP' THEN sr.amount * o.weight ELSE 0 END) AS drop_weighted
+         SUM(CASE WHEN sr.rule_name = 'COMPLETION' THEN sr.amount * o.weight ELSE 0 END) AS completion_weighted,
+         SUM(CASE WHEN sr.rule_name = 'CATCH' THEN sr.amount * o.weight ELSE 0 END) AS catch_weighted,
+         SUM(CASE WHEN sr.rule_name = 'DROP' THEN sr.amount * o.weight ELSE 0 END) AS drop_weighted,
+         SUM(CASE WHEN sr.rule_name = 'THREW_DROP' THEN sr.amount * o.weight ELSE 0 END) AS threw_drop_weighted
   FROM opp o
   LEFT JOIN salary_rule sr ON sr.point_id = o.point_id AND sr.player_id = o.id_a
   GROUP BY o.id_a, o.id_b
@@ -273,37 +282,68 @@ rule_weighted AS (
 baseline_pivot AS (
   -- One row per player with the per-rule means the breakdown subtracts. A
   -- rule the player has no facts for reads 0, which is what its delta
-  -- means.
+  -- means. Every mean divides by the same appearance count the salary
+  -- mean does, so the rule means add up to the salary mean.
   SELECT player_id,
          COALESCE(MAX(CASE WHEN metric = 'salary:GOAL' THEN mean END), 0) AS goal_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:ASSIST' THEN mean END), 0) AS assist_mean,
+         COALESCE(MAX(CASE WHEN metric = 'salary:SECOND_ASSIST' THEN mean END), 0) AS second_assist_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:DEFENSE' THEN mean END), 0) AS defense_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:HOLD' THEN mean END), 0) AS hold_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:BREAK' THEN mean END), 0) AS break_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:THROWAWAY' THEN mean END), 0) AS throw_away_mean,
-         COALESCE(MAX(CASE WHEN metric = 'salary:DROP' THEN mean END), 0) AS drop_mean
+         COALESCE(MAX(CASE WHEN metric = 'salary:COMPLETION' THEN mean END), 0) AS completion_mean,
+         COALESCE(MAX(CASE WHEN metric = 'salary:CATCH' THEN mean END), 0) AS catch_mean,
+         COALESCE(MAX(CASE WHEN metric = 'salary:DROP' THEN mean END), 0) AS drop_mean,
+         COALESCE(MAX(CASE WHEN metric = 'salary:THREW_DROP' THEN mean END), 0) AS threw_drop_mean
   FROM player_baselines
   GROUP BY player_id
+),
+deltas AS (
+  -- The raw numerators, one row per directed pair. The divisor column guards the
+  -- division: weights are never negative, so weighted_points = 0 means
+  -- every weight was 0, which makes every numerator here 0 too, and the
+  -- division reads 0 / 1 instead of 0 / 0.
+  SELECT c.id_a, c.id_b,
+         pa.name AS player_name, pb.name AS opponent_name,
+         c.points_against, c.total_credit, c.weighted_points,
+         CASE WHEN c.weighted_points = 0 THEN 1 ELSE c.weighted_points END AS divisor,
+         rw.goal_weighted - bl.goal_mean * c.weighted_points AS goal_credit,
+         rw.assist_weighted - bl.assist_mean * c.weighted_points AS assist_credit,
+         rw.second_assist_weighted - bl.second_assist_mean * c.weighted_points AS second_assist_credit,
+         rw.defense_weighted - bl.defense_mean * c.weighted_points AS defense_credit,
+         rw.hold_weighted - bl.hold_mean * c.weighted_points AS hold_credit,
+         rw.break_weighted - bl.break_mean * c.weighted_points AS break_credit,
+         rw.throw_away_weighted - bl.throw_away_mean * c.weighted_points AS throw_away_credit,
+         rw.completion_weighted - bl.completion_mean * c.weighted_points AS completion_credit,
+         rw.catch_weighted - bl.catch_mean * c.weighted_points AS catch_credit,
+         rw.drop_weighted - bl.drop_mean * c.weighted_points AS drop_credit,
+         rw.threw_drop_weighted - bl.threw_drop_mean * c.weighted_points AS threw_drop_credit
+  FROM credits c
+  JOIN rule_weighted rw ON rw.id_a = c.id_a AND rw.id_b = c.id_b
+  JOIN baseline_pivot bl ON bl.player_id = c.id_a
+  JOIN players pa ON pa.player_id = c.id_a
+  JOIN players pb ON pb.player_id = c.id_b
 )
 SELECT
-  c.id_a AS player_id, c.id_b AS opponent_id,
-  pa.name AS player_name, pb.name AS opponent_name,
-  c.points_against,
-  CASE WHEN c.weighted_points = 0 THEN 0 ELSE c.total_credit / c.weighted_points END AS affected_delta,
-  c.total_credit,
-  c.weighted_points,
-  rw.goal_weighted - bl.goal_mean * c.weighted_points AS goal_delta,
-  rw.assist_weighted - bl.assist_mean * c.weighted_points AS assist_delta,
-  rw.defense_weighted - bl.defense_mean * c.weighted_points AS defense_delta,
-  rw.hold_weighted - bl.hold_mean * c.weighted_points AS hold_delta,
-  rw.break_weighted - bl.break_mean * c.weighted_points AS break_delta,
-  rw.throw_away_weighted - bl.throw_away_mean * c.weighted_points AS throw_away_delta,
-  rw.drop_weighted - bl.drop_mean * c.weighted_points AS drop_delta
-FROM credits c
-JOIN rule_weighted rw ON rw.id_a = c.id_a AND rw.id_b = c.id_b
-JOIN baseline_pivot bl ON bl.player_id = c.id_a
-JOIN players pa ON pa.player_id = c.id_a
-JOIN players pb ON pb.player_id = c.id_b;
+  id_a AS player_id, id_b AS opponent_id,
+  player_name, opponent_name,
+  points_against,
+  total_credit / divisor AS affected_delta,
+  total_credit,
+  weighted_points,
+  goal_credit / divisor AS goal_delta,
+  assist_credit / divisor AS assist_delta,
+  second_assist_credit / divisor AS second_assist_delta,
+  defense_credit / divisor AS defense_delta,
+  hold_credit / divisor AS hold_delta,
+  break_credit / divisor AS break_delta,
+  throw_away_credit / divisor AS throw_away_delta,
+  completion_credit / divisor AS completion_delta,
+  catch_credit / divisor AS catch_delta,
+  drop_credit / divisor AS drop_delta,
+  threw_drop_credit / divisor AS threw_drop_delta
+FROM deltas;
 `;
 
 /**

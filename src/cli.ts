@@ -55,18 +55,30 @@ const COMMANDS = ["ingest", "leaderboard", "pair", "opponents", "evaluate", "exp
  */
 const EXPORTABLE_TABLES = ["pair_effects", "opponent_effects", "player_baselines"];
 
-/** The `opponents` table: identity, sample size, effect, and the per-rule breakdown. */
+/**
+ * The `opponents` table: identity, both sample sizes and the credit they
+ * divide, then the headline and all eleven per-rule deltas. Every delta is
+ * credit per weighted point, so the rule columns add up to `affected_delta`
+ * and a reader can reconcile a printed row by hand; the CSV export carries
+ * the unrounded figures.
+ */
 const OPPONENT_COLUMNS = [
   "opponent_name",
   "points_against",
+  "total_credit",
+  "weighted_points",
   "affected_delta",
   "goal_delta",
   "assist_delta",
+  "second_assist_delta",
   "defense_delta",
   "hold_delta",
   "break_delta",
   "throw_away_delta",
+  "completion_delta",
+  "catch_delta",
   "drop_delta",
+  "threw_drop_delta",
 ];
 
 /** The `evaluate` pair table: both members, the shared-point sample, and the salary effect. */
@@ -366,10 +378,13 @@ function cmdPair(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]
 }
 
 /**
- * `opponents <player>`: the suppression rows for one player. The lookup
- * in `players` happens first, because a player who is not in the store
- * and a player with no qualifying opponents are different facts: the
- * first is an error, the second an empty report.
+ * `opponents <player>`: the suppression rows for one player. Each delta is
+ * credit per weighted point, so the eleven rule columns sum to
+ * `affected_delta`, and `total_credit` / `weighted_points` is printed
+ * beside them for a hand check. The lookup in `players` happens first,
+ * because a player who is not in the store and a player with no
+ * qualifying opponents are different facts: the first is an error, the
+ * second an empty report.
  */
 function cmdOpponents(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]): number {
   const player = positional(parsed, 0);

@@ -8,10 +8,12 @@ export type OpponentRow = { [column: string]: string | number | null };
 /**
  * The suppression rows for one player: opponents the player faced on at
  * least `minPoints` points, ordered by `affected_delta` ascending so the
- * most suppressing opponents come first, limited in SQL. A player who is
- * not in the store has no `player_id` and gets an empty array; the caller
- * checks the `players` table separately to tell "no effect" from "not
- * found".
+ * most suppressing opponents come first, limited in SQL. Every row carries
+ * `points_against`, `total_credit` and `weighted_points`, and each
+ * `*_delta` column is credit per weighted point, so the eleven rule
+ * columns sum to `affected_delta`. A player who is not in the store has no
+ * `player_id` and gets an empty array; the caller checks the `players`
+ * table separately to tell "no effect" from "not found".
  */
 export function opponentEffects(
   db: Db,

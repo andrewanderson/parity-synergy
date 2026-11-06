@@ -141,7 +141,7 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_opponent_effects",
     {
       description:
-        "List the opponents that most suppressed one player, most suppressing first, with points_against beside every effect." +
+        "List the opponents that most suppressed one player, most suppressing first. Every row carries points_against, total_credit and weighted_points; each *_delta column is credit per weighted point, so the eleven rule columns sum to affected_delta." +
         ERROR_NOTE,
       inputSchema: {
         player: z.string(),
