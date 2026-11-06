@@ -10,7 +10,9 @@ export type PairRow = { [column: string]: string | number | null };
 /**
  * The sort column for each leaderboard metric. The metric name is looked up
  * in this fixed map and never interpolated into SQL, so a metric name cannot
- * become SQL. An unknown metric falls back to `a_shrunk_delta`.
+ * become SQL. Only own properties count as entries: inherited keys such as
+ * `constructor` or `toString` fall back to `a_shrunk_delta` like any other
+ * unknown metric.
  */
 const METRIC_SORT_COLUMNS: Record<string, string> = {
   salary: "a_shrunk_delta",
@@ -26,8 +28,10 @@ const METRIC_SORT_COLUMNS: Record<string, string> = {
 /**
  * The teammate leaderboard: pairs with at least `minPoints` shared points,
  * ordered by the requested metric's column and limited, all inside SQL, so
- * the view is never materialised into memory. Every row carries its sample
- * size (`points_together`) alongside its effects.
+ * the view is never materialized into memory. Every row carries its sample
+ * size (`points_together`) alongside its effects. The final `player_a`
+ * tie-breaker makes the ordering total when the metric column and the sample
+ * size tie.
  */
 export function pairLeaderboard(
   db: Db,
@@ -37,13 +41,15 @@ export function pairLeaderboard(
   const limit = options.limit ?? 50;
   const order = options.order ?? "desc";
   const metric = options.metric ?? "salary";
-  const sortColumn = METRIC_SORT_COLUMNS[metric] ?? "a_shrunk_delta";
+  const sortColumn = Object.hasOwn(METRIC_SORT_COLUMNS, metric)
+    ? METRIC_SORT_COLUMNS[metric]!
+    : "a_shrunk_delta";
   const direction = order === "asc" ? "ASC" : "DESC";
   return db
     .prepare(
       `SELECT * FROM pair_effects
        WHERE points_together >= @minPoints
-       ORDER BY ${sortColumn} ${direction}, points_together DESC
+       ORDER BY ${sortColumn} ${direction}, points_together DESC, player_a ASC
        LIMIT @limit`,
     )
     .all({ minPoints, limit }) as PairRow[];

@@ -165,6 +165,20 @@ describe("pairLeaderboard", () => {
     expect(viewCount("players")).toBe(22);
   });
 
+  it("falls back for inherited object keys that are not map entries", () => {
+    // `constructor`, `__proto__`, and friends resolve through the prototype
+    // chain of a plain object literal, so they must be treated as unknown
+    // metrics rather than interpolated into ORDER BY as functions.
+    const fallback = pairLeaderboard(db, {});
+    expect(fallback.length).toBeGreaterThan(0);
+    for (const metric of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+      const rows = pairLeaderboard(db, { metric });
+      expect(rows).toEqual(fallback); // same result as the default, no throw
+      expect(rows.length).toBeGreaterThan(0); // the SQL parsed and returned rows
+    }
+    expect(viewCount("players")).toBe(22);
+  });
+
   it("returns sample sizes with every row", () => {
     const rows = pairLeaderboard(db);
     expect(rows.length).toBeGreaterThan(0);
@@ -301,6 +315,30 @@ describe("evaluateTeam", () => {
     expect(result.teamTotalShrunkDelta).toBe(0);
   });
 
+  it("lists one entry per input name across players and unknownPlayers", () => {
+    // `players` keeps the caller's spelling, one entry per input name, so
+    // repeated spellings appear once each and the two lists together count
+    // the input exactly once per entry.
+    const input = [
+      "Eric Moore",
+      "eric moore (S)",
+      "Geoff Solomon",
+      "Nobody At All",
+      "nobody at all",
+    ];
+    const result = evaluateTeam(db, input);
+    expect(result.players).toEqual(["Eric Moore", "eric moore (S)", "Geoff Solomon"]);
+    expect(result.unknownPlayers).toEqual(["Nobody At All", "nobody at all"]);
+    expect(result.players.length + result.unknownPlayers.length).toBe(input.length);
+
+    // A repeated spelling resolves once, so the team matches its
+    // single-spelling form: same pairs, same total.
+    const single = evaluateTeam(db, ["Eric Moore", "Geoff Solomon"]);
+    expect(single.players).toHaveLength(2);
+    expect(result.pairs).toEqual(single.pairs);
+    expect(result.teamTotalShrunkDelta).toBeCloseTo(single.teamTotalShrunkDelta, 10);
+  });
+
   it("finds every pair among the team regardless of the caller's order", () => {
     const names = [
       "Andrew Croisier",
@@ -334,6 +372,20 @@ describe("evaluateTeam", () => {
       expect(keys).toContain(row.player_b as string);
       expect(row.points_together as number).toBeGreaterThanOrEqual(MIN_SHARED_POINTS);
     }
+
+    // Completeness: the returned count equals the number of qualifying pairs
+    // among the six, recomputed from raw same-line shared-point counts rather
+    // than read from the view, so a missed pair cannot cancel a phantom one.
+    let qualifying = 0;
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const shared = sharedPointIds(idOf(keys[i]!), idOf(keys[j]!)).length;
+        if (shared >= MIN_SHARED_POINTS) qualifying += 1;
+      }
+    }
+    expect(qualifying).toBeGreaterThan(0);
+    expect(forward.pairs).toHaveLength(qualifying);
+    expect(reversed.pairs).toHaveLength(qualifying);
   });
 
   it("sums the shrunk deltas of the returned pairs", () => {

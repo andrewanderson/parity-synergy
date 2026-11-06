@@ -3,9 +3,15 @@ import { playerIdFor } from "../store/baselines.js";
 import { MIN_SHARED_POINTS, nameKeyFor, type PairRow } from "./pairs.js";
 
 export type TeamEvaluation = {
-  /** The input names that resolved to a player in the store. */
+  /**
+   * One entry per input name that resolved to a player, in input order, in
+   * the caller's spelling: a repeated spelling appears once per input.
+   * Together with `unknownPlayers` this counts every input entry exactly
+   * once, so `players.length + unknownPlayers.length` equals the input
+   * length. Distinct resolved players are what `pairs` is built from.
+   */
   players: string[];
-  /** The input names that did not, so a typo is visible rather than dropped. */
+  /** One entry per input name that was not in the store, in input order, so a typo is visible rather than dropped. */
   unknownPlayers: string[];
   pairs: PairRow[];
   riskyPairs: PairRow[];
@@ -32,7 +38,9 @@ function isRisky(pair: PairRow): boolean {
  * that shares at least `MIN_SHARED_POINTS` points, the risky subset, and a
  * rough total. Names resolve case-insensitively with a terminal `(S)`
  * stripped; unresolved names are reported in `unknownPlayers` rather than
- * silently dropped.
+ * silently dropped. A repeated spelling resolves once for the pair query, so
+ * it does not change `pairs` or `teamTotalShrunkDelta`, while each input
+ * entry still appears exactly once across `players` and `unknownPlayers`.
  *
  * The view stores `player_a` as the lower `name_key`, so the query never
  * assumes the caller's ordering: it asks for rows whose `player_a` and
