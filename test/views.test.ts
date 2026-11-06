@@ -401,18 +401,23 @@ describe("pair_effects view", () => {
         (shared.length + 8),
     );
 
-    // Statistic deltas: raw counts minus baseline mean times shared points.
-    expect(row.a_goals_delta).toBe(
-      sumMetric(shared, aId, "goals") - baselineMean(aId, "goals") * shared.length,
-    );
-    expect(row.b_goals_delta).toBe(
-      sumMetric(shared, bId, "goals") - baselineMean(bId, "goals") * shared.length,
-    );
-
-    // The five statistics the design's metric list needs and the view did
-    // not have: the same recomputation, per member, so a swapped a_/b_
-    // column cannot pass here.
-    for (const metric of ["second_assists", "d_blocks", "completions", "catches", "pulls"]) {
+    // Statistic deltas: raw counts minus baseline mean times shared points,
+    // recomputed for all ten statistics and both members, so a swapped
+    // a_/b_ column cannot pass here. The five the view gained for the
+    // design's metric list are checked exactly like the original five.
+    const statistics = [
+      "goals",
+      "assists",
+      "second_assists",
+      "d_blocks",
+      "completions",
+      "throw_aways",
+      "threw_drops",
+      "catches",
+      "drops",
+      "pulls",
+    ];
+    for (const metric of statistics) {
       expect(row[`a_${metric}_delta` as keyof PairRow]).toBe(
         sumMetric(shared, aId, metric) - baselineMean(aId, metric) * shared.length,
       );
@@ -433,6 +438,12 @@ describe("pair_effects view", () => {
     );
     expect(row.b_break_delta).toBe(
       sumRule(shared, bId, "BREAK") - baselineMean(bId, "salary:BREAK") * shared.length,
+    );
+    expect(row.a_defense_delta).toBe(
+      sumRule(shared, aId, "DEFENSE") - baselineMean(aId, "salary:DEFENSE") * shared.length,
+    );
+    expect(row.b_defense_delta).toBe(
+      sumRule(shared, bId, "DEFENSE") - baselineMean(bId, "salary:DEFENSE") * shared.length,
     );
 
     // Negative rate with the partner, over the shared points.
