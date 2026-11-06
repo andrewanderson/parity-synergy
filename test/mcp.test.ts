@@ -118,6 +118,27 @@ describe("synergy MCP server", () => {
     await client.close();
   });
 
+  it("states the real sample floor in every report tool's description", async () => {
+    // A description that names the wrong default sends a caller to the
+    // wrong pair set, so the numbers are pinned here rather than left to
+    // the prose staying in sync with the code.
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool.description ?? ""]));
+
+    const leaderboard = byName.get("synergy_pair_leaderboard")!;
+    expect(leaderboard).toContain("default is 8 shared points");
+    expect(leaderboard).toContain("5-point floor");
+    expect(leaderboard).toContain("Supported metrics:");
+
+    const opponents = byName.get("synergy_opponent_effects")!;
+    expect(opponents).toContain("5 points_against");
+    expect(opponents).toContain("weighted_points");
+    expect(opponents).toContain("sum to affected_delta");
+
+    const evaluation = byName.get("synergy_team_evaluation")!;
+    expect(evaluation).toContain("at least 5 shared points");
+  });
+
   it("synergy_list_leagues returns the fixture's single league with its game count", async () => {
     const result = await call(client, "synergy_list_leagues", {});
     if (!result.ok) throw new Error(result.text);

@@ -90,7 +90,10 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_pair_leaderboard",
     {
       description:
-        "List teammate pairs ordered by a metric's effect, with points_together beside every effect; pairs below 5 shared points are excluded." +
+        "List teammate pairs ordered by a metric's effect, with points_together beside every effect." +
+        " With no minPoints the default is 8 shared points (the shrinkage half-weight point, where a" +
+        " pair's measured delta reaches half its raw value); pairs below the 5-point floor are excluded" +
+        " whatever minPoints asks for." +
         ` Supported metrics: ${PAIR_METRICS.join(", ")}.` +
         ERROR_NOTE,
       inputSchema: {
@@ -149,7 +152,7 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_opponent_effects",
     {
       description:
-        "List the opponents that most suppressed one player, most suppressing first. Every row carries points_against, total_credit and weighted_points; each *_delta column is credit per weighted point, so the eleven rule columns sum to affected_delta." +
+        "List the opponents that most suppressed one player, most suppressing first. Every row carries points_against, total_credit and weighted_points; each *_delta column is credit per weighted point, so the eleven rule columns sum to affected_delta. Rows are included at 5 points_against or more, the default and the floor." +
         ERROR_NOTE,
       inputSchema: {
         player: z.string(),
@@ -174,7 +177,7 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_team_evaluation",
     {
       description:
-        "Evaluate a proposed team: resolved players, unknown names, teammate pairs, risky pairs, and the rough team total." +
+        "Evaluate a proposed team: resolved players, unknown names, teammate pairs, risky pairs, and the rough team total. Only pairs with at least 5 shared points are included, and the total covers exactly those pairs." +
         ERROR_NOTE,
       inputSchema: {
         team: z.array(z.string()),
