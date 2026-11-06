@@ -23,13 +23,32 @@ function errorResult(cause: unknown): { content: Array<{ type: "text"; text: str
 }
 
 /**
- * The sample floor for a listing report: the caller's `minPoints` when it
- * is given, raised to `MIN_SHARED_POINTS` either way, so pairs below the
- * 5-point floor are excluded from reports whatever the caller asks for.
- * This mirrors the CLI's `reportMinPoints` clamp.
+ * Appended to every tool description: the two body shapes a caller can
+ * receive under `isError`, so it branches on `isError` before parsing.
+ * The SDK's own validation text is surfaced as-is, never normalized here.
  */
-function reportMinPoints(minPoints: number | undefined): number {
-  return Math.max(minPoints ?? MIN_SHARED_POINTS, MIN_SHARED_POINTS);
+const ERROR_NOTE =
+  " On isError, a store failure is JSON { error, message } while a rejected argument is plain text (MCP error -32602).";
+
+/**
+ * The leaderboard's default minimum shared points: the shrinkage
+ * half-weight threshold (k = 8), where a pair's measured delta reaches
+ * half its raw value, matching the CLI's leaderboard default so both
+ * surfaces answer with the same pair set. The 5-point floor still applies
+ * below it, so the effective default is `max(8, MIN_SHARED_POINTS)`.
+ * Defined here rather than imported from the CLI because the CLI module
+ * imports the Parity API source, which this server must never pull in.
+ */
+const LEADERBOARD_MIN_POINTS_DEFAULT = 8;
+
+/**
+ * The sample floor for a listing report: `defaultMinPoints` when the
+ * caller gives none, raised to `MIN_SHARED_POINTS` either way, so pairs
+ * below the 5-point floor are excluded from reports whatever the caller
+ * asks for. Mirrors the CLI's `reportMinPoints` clamp.
+ */
+function reportMinPoints(minPoints: number | undefined, defaultMinPoints: number): number {
+  return Math.max(minPoints ?? defaultMinPoints, MIN_SHARED_POINTS);
 }
 
 /**
@@ -49,7 +68,8 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
   server.registerTool(
     "synergy_list_leagues",
     {
-      description: "List the leagues held in the local store with their game counts.",
+      description:
+        "List the leagues held in the local store with their game counts." + ERROR_NOTE,
       inputSchema: {},
     },
     async (): Promise<ReturnType<typeof textResult> | ReturnType<typeof errorResult>> => {
@@ -70,7 +90,8 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_pair_leaderboard",
     {
       description:
-        "List teammate pairs ordered by a metric's effect, with points_together beside every effect; pairs below 5 shared points are excluded.",
+        "List teammate pairs ordered by a metric's effect, with points_together beside every effect; pairs below 5 shared points are excluded." +
+        ERROR_NOTE,
       inputSchema: {
         metric: z.string().optional(),
         minPoints: z.number().int().optional(),
@@ -82,7 +103,7 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
       try {
         const pairs = pairLeaderboard(db, {
           metric: args.metric,
-          minPoints: reportMinPoints(args.minPoints),
+          minPoints: reportMinPoints(args.minPoints, LEADERBOARD_MIN_POINTS_DEFAULT),
           limit: args.limit,
           order: args.order,
         });
@@ -97,7 +118,8 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_pair_detail",
     {
       description:
-        "Get the full teammate-pair row for two players, or { pair: null } when they never shared a point.",
+        "Get the full teammate-pair row for two players, or { pair: null } when they never shared a point." +
+        ERROR_NOTE,
       inputSchema: {
         playerA: z.string(),
         playerB: z.string(),
@@ -119,7 +141,8 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_opponent_effects",
     {
       description:
-        "List the opponents that most suppressed one player, most suppressing first, with points_against beside every effect.",
+        "List the opponents that most suppressed one player, most suppressing first, with points_against beside every effect." +
+        ERROR_NOTE,
       inputSchema: {
         player: z.string(),
         minPoints: z.number().int().optional(),
@@ -129,7 +152,7 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     async (args): Promise<ReturnType<typeof textResult> | ReturnType<typeof errorResult>> => {
       try {
         const opponents = opponentEffects(db, args.player, {
-          minPoints: reportMinPoints(args.minPoints),
+          minPoints: reportMinPoints(args.minPoints, MIN_SHARED_POINTS),
           limit: args.limit,
         });
         return textResult({ player: args.player, opponents });
@@ -143,7 +166,8 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_team_evaluation",
     {
       description:
-        "Evaluate a proposed team: resolved players, unknown names, teammate pairs, risky pairs, and the rough team total.",
+        "Evaluate a proposed team: resolved players, unknown names, teammate pairs, risky pairs, and the rough team total." +
+        ERROR_NOTE,
       inputSchema: {
         team: z.array(z.string()),
       },
@@ -162,7 +186,8 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     "synergy_player_profile",
     {
       description:
-        "Get one player's stored baselines, teammate pairs, and opponent suppression rows, each with its sample size.",
+        "Get one player's stored baselines plus teammate pairs and opponent rows at or above 5 shared points, each with its sample size." +
+        ERROR_NOTE,
       inputSchema: {
         player: z.string(),
       },
@@ -170,7 +195,20 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     async (args): Promise<ReturnType<typeof textResult> | ReturnType<typeof errorResult>> => {
       try {
         const profile = playerProfile(db, args.player);
-        return textResult({ player: args.player, ...profile });
+        // The query layer leaves the sample floor to its caller, and this
+        // is the report surface: pairs and opponents below 5 shared points
+        // are excluded here, while baseline rows keep their own `points`
+        // sample size.
+        return textResult({
+          player: args.player,
+          baseline: profile.baseline,
+          teammates: profile.teammates.filter(
+            (row) => (row.points_together as number) >= MIN_SHARED_POINTS,
+          ),
+          opponents: profile.opponents.filter(
+            (row) => (row.points_against as number) >= MIN_SHARED_POINTS,
+          ),
+        });
       } catch (cause) {
         return errorResult(cause);
       }

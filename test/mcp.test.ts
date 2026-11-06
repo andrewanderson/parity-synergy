@@ -15,6 +15,7 @@ import { writeGameFacts } from "../src/store/facts.js";
 import { recomputeBaselines } from "../src/store/baselines.js";
 import { openDb, type Db } from "../src/store/db.js";
 import { MIN_SHARED_POINTS } from "../src/query/pairs.js";
+import { run } from "../src/cli.js";
 
 const fixturePath = path.resolve(
   process.cwd(),
@@ -40,6 +41,7 @@ const full = assembleFullGame(payload);
 const pointStats = buildPointStats(payload);
 
 let db: Db;
+let dbPath: string;
 let mcp: McpServer;
 let client: Client;
 const dirs: string[] = [];
@@ -47,7 +49,8 @@ const dirs: string[] = [];
 beforeEach(async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "synergy-mcp-"));
   dirs.push(dir);
-  db = openDb(path.join(dir, "test.db"));
+  dbPath = path.join(dir, "test.db");
+  db = openDb(dbPath);
   recomputeBaselines(db, writeGameFacts(db, full, pointStats));
   mcp = createSynergyServer({ db });
   client = new Client({ name: "test-client", version: "0.0.1" });
@@ -151,6 +154,55 @@ describe("synergy MCP server", () => {
     expect(below.n).toBeGreaterThan(0);
   });
 
+  it("synergy_pair_leaderboard defaults to the CLI's bare leaderboard", async () => {
+    const result = await call(client, "synergy_pair_leaderboard", {});
+    if (!result.ok) throw new Error(result.text);
+    const data = result.data as {
+      pairs: Array<{ player_a: string; player_b: string; points_together: number }>;
+    };
+
+    // The CLI's bare `leaderboard`: same query layer with its own defaults
+    // (salary metric, the 8-point default, limit 50), rendered as a table.
+    const cli = await run(["leaderboard"], { db });
+    expect(cli.code).toBe(0);
+    const cliRows = cli.stdout
+      .split("\n")
+      .slice(1)
+      .filter((line) => line.trim() !== "")
+      .map((line) => {
+        const [playerA, playerB, points] = line.trim().split(/\s{2,}/);
+        return { player_a: playerA!, player_b: playerB!, points_together: Number(points) };
+      });
+    expect(cliRows.length).toBeGreaterThan(0);
+    expect(
+      data.pairs.map((pair) => ({
+        player_a: pair.player_a,
+        player_b: pair.player_b,
+        points_together: pair.points_together,
+      })),
+    ).toEqual(cliRows);
+
+    // Non-vacuous: the store holds pairs between the 5-point floor and the
+    // 8-point default, and the default keeps every one of them out.
+    const band = db
+      .prepare(
+        "SELECT player_a, player_b FROM pair_effects WHERE points_together >= ? AND points_together < ?",
+      )
+      .all(MIN_SHARED_POINTS, 8) as Array<{ player_a: string; player_b: string }>;
+    expect(band.length).toBeGreaterThan(0);
+    for (const pair of band) {
+      const seen = data.pairs.some(
+        (row) =>
+          (row.player_a === pair.player_a && row.player_b === pair.player_b) ||
+          (row.player_a === pair.player_b && row.player_b === pair.player_a),
+      );
+      expect(seen).toBe(false);
+    }
+    for (const row of data.pairs) {
+      expect(row.points_together).toBeGreaterThanOrEqual(8);
+    }
+  });
+
   it("synergy_pair_detail returns the fixture's most-shared pair", async () => {
     const result = await call(client, "synergy_pair_detail", {
       playerA: "Eric Moore",
@@ -211,10 +263,38 @@ describe("synergy MCP server", () => {
     expect(data.pairs.length).toBeGreaterThan(0);
     expect(data.players).toEqual(["Andrew Croisier", "Angela Mueller"]);
     expect(data.unknownPlayers).toEqual([]);
+    expect(typeof data.teamTotalShrunkDelta).toBe("number");
+  });
+
+  it("keeps a sub-5 pair among team members out of the evaluation", async () => {
+    // Non-vacuous: this team really holds a pair below the floor, so the
+    // exclusion below is the floor working rather than the pair's absence.
+    const rawSub5 = db
+      .prepare("SELECT points_together FROM pair_effects WHERE player_a = ? AND player_b = ?")
+      .get("alisha zhao", "andrew croisier") as { points_together: number } | undefined;
+    expect(rawSub5).toBeDefined();
+    expect(rawSub5!.points_together).toBeLessThan(MIN_SHARED_POINTS);
+
+    const result = await call(client, "synergy_team_evaluation", {
+      team: ["Andrew Croisier", "Angela Mueller", "Alisha Zhao"],
+    });
+    if (!result.ok) throw new Error(result.text);
+    const data = result.data as {
+      players: string[];
+      unknownPlayers: string[];
+      pairs: Row[];
+    };
+    expect(data.players).toEqual(["Andrew Croisier", "Angela Mueller", "Alisha Zhao"]);
+    expect(data.unknownPlayers).toEqual([]);
+    expect(data.pairs.length).toBeGreaterThan(0);
     for (const pair of data.pairs) {
       expect(pair.points_together as number).toBeGreaterThanOrEqual(MIN_SHARED_POINTS);
     }
-    expect(typeof data.teamTotalShrunkDelta).toBe("number");
+    const keys = data.pairs.map((pair) => `${pair.player_a}/${pair.player_b}`);
+    expect(keys).not.toContain("alisha zhao/andrew croisier");
+    // The qualifying pair of the same team stays, so the list is not
+    // vacuously floor-compliant either.
+    expect(keys).toContain("andrew croisier/angela mueller");
   });
 
   it("synergy_player_profile returns baselines, teammates, and opponents with sample sizes", async () => {
@@ -235,6 +315,72 @@ describe("synergy MCP server", () => {
     }
     for (const row of data.opponents) {
       expect(typeof row.points_against).toBe("number");
+    }
+  });
+
+  it("keeps sub-5 rows out of the player profile", async () => {
+    // Non-vacuous: this player really has a sub-5 teammate pair and sub-5
+    // opponent rows in the store, so the floor has something to remove.
+    const sub5Teammates = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM pair_effects WHERE (player_a = ? OR player_b = ?) AND points_together < ?",
+      )
+      .get("andrew croisier", "andrew croisier", MIN_SHARED_POINTS) as { n: number };
+    const sub5Opponents = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM opponent_effects WHERE player_name = ? AND points_against < ?",
+      )
+      .get("Andrew Croisier", MIN_SHARED_POINTS) as { n: number };
+    expect(sub5Teammates.n).toBeGreaterThan(0);
+    expect(sub5Opponents.n).toBeGreaterThan(0);
+
+    const result = await call(client, "synergy_player_profile", { player: "Andrew Croisier" });
+    if (!result.ok) throw new Error(result.text);
+    const data = result.data as { teammates: Row[]; opponents: Row[] };
+    expect(data.teammates.length).toBeGreaterThan(0);
+    expect(data.opponents.length).toBeGreaterThan(0);
+    for (const row of data.teammates) {
+      expect(row.points_together as number).toBeGreaterThanOrEqual(MIN_SHARED_POINTS);
+    }
+    for (const row of data.opponents) {
+      expect(row.points_against as number).toBeGreaterThanOrEqual(MIN_SHARED_POINTS);
+    }
+    // The specific sub-5 rows are gone while a qualifying row of each kind
+    // stays, so neither list passes by being emptied.
+    expect(
+      data.teammates.some(
+        (row) => row.player_a === "alisha zhao" && row.player_b === "andrew croisier",
+      ),
+    ).toBe(false);
+    expect(data.opponents.some((row) => row.opponent_name === "George Payne")).toBe(false);
+  });
+
+  it("returns isError with a JSON error body for every tool when the store fails", async () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["synergy_list_leagues", {}],
+      ["synergy_pair_leaderboard", {}],
+      ["synergy_pair_detail", { playerA: "Eric Moore", playerB: "Geoff Solomon" }],
+      ["synergy_opponent_effects", { player: "Justin Ye" }],
+      ["synergy_team_evaluation", { team: ["Andrew Croisier", "Angela Mueller"] }],
+      ["synergy_player_profile", { player: "Justin Ye" }],
+    ];
+    // A closed store is the failure every handler must absorb and report
+    // as isError rather than let the call reject.
+    db.close();
+    try {
+      for (const [name, args] of cases) {
+        const result = await call(client, name, args);
+        if (result.ok) throw new Error(`${name} reported success on a closed store`);
+        expect(result.isError).toBe(true);
+        const body = JSON.parse(result.text) as { error: string; message: string };
+        expect(body.error).toBe("INTERNAL");
+        expect(typeof body.message).toBe("string");
+        expect(body.message.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // Reopen so afterEach closes an open handle and the rest of the
+      // suite (each test builds its own store anyway) is unaffected.
+      db = openDb(dbPath);
     }
   });
 });
