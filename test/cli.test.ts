@@ -12,7 +12,7 @@ import { openDb, type Db } from "../src/store/db.js";
 import { writeGameFacts } from "../src/store/facts.js";
 import { recomputeBaselines } from "../src/store/baselines.js";
 import { evaluateTeam } from "../src/query/teams.js";
-import { formatCsvRow, run } from "../src/cli.js";
+import { dbPathFromArgv, formatCsvRow, parseArgs, resolveBaseUrl, run } from "../src/cli.js";
 
 const fixturePath = path.resolve(
   process.cwd(),
@@ -99,6 +99,36 @@ describe("cli", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("points_together");
+    // Every column is padded to its width, the last one included, so a
+    // right-aligned final column lines up and no line has trailing space.
+    const lines = result.stdout.split("\n");
+    expect(new Set(lines.map((line) => line.length)).size).toBe(1);
+  });
+
+  it("defaults the leaderboard floor to 8 rather than the 5-point floor", async () => {
+    // Non-vacuous: the fixture holds pairs with 5 to 7 shared points,
+    // which the bare command must exclude...
+    const small = count(
+      "SELECT COUNT(*) AS n FROM pair_effects WHERE points_together BETWEEN 5 AND 7",
+    );
+    expect(small).toBeGreaterThan(0);
+
+    const bare = await run(["leaderboard", "--limit", "1000"], { db });
+    const atEight = count("SELECT COUNT(*) AS n FROM pair_effects WHERE points_together >= 8");
+    expect(bare.stdout.split("\n")).toHaveLength(atEight + 1);
+
+    // ...and an explicit --min-points 5 must show them again.
+    const asked = await run(["leaderboard", "--min-points", "5", "--limit", "1000"], { db });
+    const atFive = count("SELECT COUNT(*) AS n FROM pair_effects WHERE points_together >= 5");
+    expect(atFive).toBeGreaterThan(atEight);
+    expect(asked.stdout.split("\n")).toHaveLength(atFive + 1);
+  });
+
+  it("rejects an unknown flag instead of silently using a default", async () => {
+    const result = await run(["leaderboard", "--limt", "10"], { db });
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("Unknown flag: --limt");
+    expect(result.stderr).toContain("leaderboard");
   });
 
   it("exits non-zero with a message on an unknown subcommand", async () => {
@@ -330,6 +360,35 @@ describe("cli", () => {
     expect(formatCsvRow(["plain", "a,b", 'say "hi"', "line1\nline2", null, 42, -1.5])).toBe(
       'plain,"a,b","say ""hi""","line1\nline2",,42,-1.5',
     );
+  });
+
+  it("resolves the ingest base URL from the flag, then the environment, then the default", () => {
+    const env = { PARITY_API_BASE_URL: "http://env.example" };
+    expect(resolveBaseUrl(parseArgs(["--base-url", "http://flag.example"]), env)).toBe(
+      "http://flag.example",
+    );
+    expect(resolveBaseUrl(parseArgs(["--base-url=http://flag.example"]), env)).toBe(
+      "http://flag.example",
+    );
+    expect(resolveBaseUrl(parseArgs([]), env)).toBe("http://env.example");
+    expect(resolveBaseUrl(parseArgs([]), {})).toBe("http://localhost:8000");
+    // The flag beats the environment, not the other way round.
+    expect(
+      resolveBaseUrl(parseArgs(["--base-url", "http://flag.example"]), {
+        PARITY_API_BASE_URL: "http://env.example",
+      }),
+    ).toBe("http://flag.example");
+  });
+
+  it("finds the --db path in raw argv for the entry point", () => {
+    expect(dbPathFromArgv(["leaderboard", "--db", "x.db"])).toBe("x.db");
+    expect(dbPathFromArgv(["--db=x.db", "leaderboard"])).toBe("x.db");
+    expect(dbPathFromArgv(["leaderboard", "--db", "a.db", "--db", "b.db"])).toBe("b.db");
+    expect(dbPathFromArgv(["leaderboard"])).toBeUndefined();
+    // A --db with no usable value yields the default, and `run` reports
+    // the missing value itself.
+    expect(dbPathFromArgv(["leaderboard", "--db"])).toBeUndefined();
+    expect(dbPathFromArgv(["leaderboard", "--db", "--limit", "5"])).toBeUndefined();
   });
 
   it("runs against the database named by --db instead of the injected one", async () => {

@@ -27,7 +27,7 @@ export type CliResult = {
 type Row = { [column: string]: string | number | null };
 
 /** The parsed remainder of the argument list: `--flag value`/`--flag=value` plus positionals. */
-type ParsedArgs = {
+export type ParsedArgs = {
   flags: Map<string, string | true>;
   positionals: string[];
 };
@@ -73,13 +73,31 @@ const OPPONENT_COLUMNS = [
 const PAIR_COLUMNS = ["player_a", "player_b", "points_together", "a_shrunk_delta", "b_shrunk_delta"];
 
 /**
+ * The leaderboard's default minimum shared points: the shrinkage
+ * half-weight threshold (k = 8), where a pair's measured delta reaches
+ * half its raw value. The 5-point floor still applies below it, so the
+ * effective default is `max(8, MIN_SHARED_POINTS)`.
+ */
+const LEADERBOARD_MIN_POINTS_DEFAULT = 8;
+
+/** The flags each subcommand accepts. `--db` is accepted by all of them. */
+const ALLOWED_FLAGS: Record<string, string[]> = {
+  ingest: ["leagues", "base-url", "db"],
+  leaderboard: ["metric", "min-points", "limit", "db"],
+  pair: ["db"],
+  opponents: ["min-points", "db"],
+  evaluate: ["team", "db"],
+  "export-csv": ["table", "out", "db"],
+};
+
+/**
  * Split the tokens after the subcommand: `--flag value` and `--flag=value`
  * become flags, everything else becomes a positional. A flag with no value
  * records `true`, which the typed readers below reject as a missing value.
  * Flags live in a Map so a hostile name such as `__proto__` cannot reach
  * an object prototype.
  */
-function parseArgs(tokens: string[]): ParsedArgs {
+export function parseArgs(tokens: string[]): ParsedArgs {
   const flags = new Map<string, string | true>();
   const positionals: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
@@ -128,12 +146,28 @@ function flagInteger(parsed: ParsedArgs, name: string, fallback: number): number
 }
 
 /**
- * The sample floor for a report: the flag may raise it, never lower it.
- * Pairs below `MIN_SHARED_POINTS` are excluded from reports whatever the
- * caller asks for, so the floor is clamped rather than passed through.
+ * The sample floor for a report: `defaultMinPoints` when the flag is
+ * absent, clamped up to `MIN_SHARED_POINTS` either way. Pairs below the
+ * 5-point floor are excluded from reports whatever the caller asks for,
+ * so the clamp can raise the value but never lower it.
  */
-function reportMinPoints(parsed: ParsedArgs, name: string): number {
-  return Math.max(flagInteger(parsed, name, MIN_SHARED_POINTS), MIN_SHARED_POINTS);
+function reportMinPoints(parsed: ParsedArgs, name: string, defaultMinPoints: number): number {
+  return Math.max(flagInteger(parsed, name, defaultMinPoints), MIN_SHARED_POINTS);
+}
+
+/**
+ * Reject a flag the subcommand does not know. A typo such as `--limt 10`
+ * would otherwise silently fall back to a default and report a number
+ * the user never asked for, so an unknown flag is an error, not a
+ * warning.
+ */
+function validateFlags(command: string, parsed: ParsedArgs): void {
+  const allowed = ALLOWED_FLAGS[command]!;
+  for (const name of parsed.flags.keys()) {
+    if (!allowed.includes(name)) {
+      throw new CliError(`Unknown flag: --${name} for ${command}`);
+    }
+  }
 }
 
 /** One cell as the tables show it: null and undefined are empty, floats carry two decimals. */
@@ -159,7 +193,9 @@ function formatDetail(value: string | number | null): string {
 /**
  * Render a plain-text table: one header line, one line per row, columns
  * padded to the widest cell and separated by two spaces. A column holding
- * only numbers is right-aligned so magnitudes line up.
+ * only numbers is right-aligned so magnitudes line up. Every column,
+ * including the last, is aligned to its width; trailing whitespace is
+ * then trimmed so lines end at the value rather than at padding.
  */
 function renderTable(columns: string[], rows: Row[]): string[] {
   const cells = rows.map((row) => columns.map((column) => formatCell(row[column])));
@@ -171,11 +207,11 @@ function renderTable(columns: string[], rows: Row[]): string[] {
   );
   const line = (values: string[]): string =>
     values
-      .map((value, index) => {
-        if (index === values.length - 1) return value;
-        return rightAligned[index] ? value.padStart(widths[index]!) : value.padEnd(widths[index]!);
-      })
-      .join("  ");
+      .map((value, index) =>
+        rightAligned[index] ? value.padStart(widths[index]!) : value.padEnd(widths[index]!),
+      )
+      .join("  ")
+      .trimEnd();
   return [line(columns), ...cells.map(line)];
 }
 
@@ -210,11 +246,47 @@ export function formatCsvRow(values: Array<string | number | null>): string {
 }
 
 /**
+ * The ingest source's base URL: `--base-url` wins over the
+ * `PARITY_API_BASE_URL` environment variable, which wins over the local
+ * default. Pure so the precedence can be pinned without a network.
+ */
+export function resolveBaseUrl(
+  parsed: ParsedArgs,
+  env: Record<string, string | undefined>,
+): string {
+  return flagString(parsed, "base-url") ?? env.PARITY_API_BASE_URL ?? "http://localhost:8000";
+}
+
+/**
+ * The `--db` path carried by raw argv, for the entry point: a `--db
+ * <path>` token pair or a `--db=<path>` token, last one wins the way the
+ * flag parser keeps it. A `--db` with no usable value yields undefined,
+ * so the entry falls back to the default store and `run` reports the
+ * missing value itself.
+ */
+export function dbPathFromArgv(argv: string[]): string | undefined {
+  let found: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]!;
+    if (token.startsWith("--db=")) {
+      found = token.slice("--db=".length);
+      continue;
+    }
+    if (token === "--db") {
+      const next = argv[i + 1];
+      found = next !== undefined && !next.startsWith("--") ? next : undefined;
+    }
+  }
+  return found;
+}
+
+/**
  * `ingest --leagues <ids>`: fetch, verify, and store every listed game,
  * one line per game and a summary line. The caller-supplied source wins
  * over `--base-url`, so tests never touch the network; otherwise the
- * source is a `ParityApiSource` built from `--base-url`, then the
- * `PARITY_API_BASE_URL` environment variable, then the local default.
+ * source is a `ParityApiSource` built from `resolveBaseUrl`'s
+ * precedence: `--base-url`, then `PARITY_API_BASE_URL`, then the local
+ * default.
  */
 async function cmdIngest(parsed: ParsedArgs, deps: CliDeps, out: string[]): Promise<number> {
   const rawLeagues = flagString(parsed, "leagues");
@@ -233,11 +305,7 @@ async function cmdIngest(parsed: ParsedArgs, deps: CliDeps, out: string[]): Prom
   if (tokens.length === 0) throw new CliError("ingest requires --leagues <comma-separated ids>");
   const leagues = tokens.map(Number);
 
-  const baseUrl =
-    flagString(parsed, "base-url") ??
-    process.env.PARITY_API_BASE_URL ??
-    "http://localhost:8000";
-  const source = deps.source ?? new ParityApiSource({ baseUrl });
+  const source = deps.source ?? new ParityApiSource({ baseUrl: resolveBaseUrl(parsed, process.env) });
 
   const outcomes = await ingestLeagues({
     leagues,
@@ -257,14 +325,15 @@ async function cmdIngest(parsed: ParsedArgs, deps: CliDeps, out: string[]): Prom
 }
 
 /**
- * `leaderboard`: the teammate pairs at or above the sample floor, ordered
- * by the requested metric and capped by `--limit`. Every row shows
- * `points_together` beside its effect, so no effect appears without the
- * sample it came from.
+ * `leaderboard`: the teammate pairs at or above the sample floor
+ * (default 8, the shrinkage half-weight point, never below the 5-point
+ * floor), ordered by the requested metric and capped by `--limit`. Every
+ * row shows `points_together` beside its effect, so no effect appears
+ * without the sample it came from.
  */
 function cmdLeaderboard(parsed: ParsedArgs, deps: CliDeps, out: string[]): number {
   const metric = flagString(parsed, "metric") ?? "salary";
-  const minPoints = reportMinPoints(parsed, "min-points");
+  const minPoints = reportMinPoints(parsed, "min-points", LEADERBOARD_MIN_POINTS_DEFAULT);
   const limit = flagInteger(parsed, "limit", 50);
   // A limit below one would print a "no pairs" line for a store that has
   // pairs, so it is refused rather than silently misreported.
@@ -305,7 +374,7 @@ function cmdPair(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]
 function cmdOpponents(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]): number {
   const player = positional(parsed, 0);
   if (player === undefined) throw new CliError("opponents requires <player>");
-  const minPoints = reportMinPoints(parsed, "min-points");
+  const minPoints = reportMinPoints(parsed, "min-points", MIN_SHARED_POINTS);
   if (playerIdFor(deps.db, nameKeyFor(player)) === undefined) {
     err.push(`Player not found: ${player}`);
     return 1;
@@ -443,6 +512,7 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
   let owned: Db | undefined;
   let code = 0;
   try {
+    validateFlags(subcommand, parsed);
     const dbPath = flagString(parsed, "db");
     const db = dbPath === undefined ? deps.db : (owned = openDb(dbPath));
     code = await dispatch(subcommand, parsed, { db, source: deps.source }, out, err);
@@ -456,11 +526,15 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
 }
 
 // Entry point: open the store, run the invocation, print what it collected,
-// and exit with its code. The guard keeps importing this module (by the
-// tests) free of side effects.
+// and exit with its code. The `--db` path is read straight from argv here,
+// because `run` receives an already-open store: without the pre-scan the
+// entry would create and migrate the default store even when `--db` points
+// elsewhere. The guard keeps importing this module (by the tests) free of
+// side effects.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const db = openDb();
-  const result = await run(process.argv.slice(2), { db });
+  const args = process.argv.slice(2);
+  const db = openDb(dbPathFromArgv(args));
+  const result = await run(args, { db });
   if (result.stdout !== "") console.log(result.stdout);
   if (result.stderr !== "") console.error(result.stderr);
   db.close();
