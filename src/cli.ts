@@ -529,13 +529,13 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
   try {
     validateFlags(subcommand, parsed);
     const dbPath = flagString(parsed, "db");
-    // Recorded before the open: afterwards a file that was not there is
-    // indistinguishable from one that always was.
-    const store = storeFileState(dbPath);
     let db: Db;
     if (deps.db !== undefined && dbPath === undefined) {
       db = deps.db;
     } else {
+      // Recorded before the open: afterwards a file that was not there is
+      // indistinguishable from one that always was.
+      const store = storeFileState(dbPath);
       db = owned = openDb(dbPath);
       if (!store.existed) out.push(`created a new empty store at ${store.path}`);
     }
