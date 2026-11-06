@@ -471,6 +471,98 @@ describe("pair_effects view", () => {
     expect(row.b_negative_rate_baseline).toBe(bNegativeTotal / baselinePoints(bId));
   });
 
+  it("detects a swapped a_/b_ column on pairs whose members differ", () => {
+    // The recomputation above runs on catherine/chelsea, where the defense,
+    // d_blocks and pulls deltas are 0 for both members, so a swapped column
+    // would pass there; it also recomputes a_goal but not b_goal, and
+    // b_break but not a_break. Two pairs close that gap:
+    //
+    //   1. catherine/jon rowe: the id order (13 > 11) disagrees with the
+    //      name_key order, so the swapped CTE fires for this pair and a
+    //      column left without its CASE reports the other member's data.
+    //      All five columns differ there, goal and break included.
+    //   2. eric moore/jon rowe: the raw shared-point amounts differ for
+    //      defense, d_blocks and pulls, so swapping the value columns alone
+    //      changes the output too.
+    const columns = [
+      { column: "defense", kind: "rule", source: "DEFENSE" },
+      { column: "d_blocks", kind: "metric", source: "d_blocks" },
+      { column: "pulls", kind: "metric", source: "pulls" },
+      { column: "goal", kind: "rule", source: "GOAL" },
+      { column: "break", kind: "rule", source: "BREAK" },
+    ] as const;
+    type Spec = (typeof columns)[number];
+    const amountColumns = columns.filter((c) =>
+      ["defense", "d_blocks", "pulls"].includes(c.column),
+    );
+
+    /** The member's summed shared-point amount for one column's source. */
+    const rawSum = (shared: number[], playerId: number, spec: Spec): number =>
+      spec.kind === "rule"
+        ? sumRule(shared, playerId, spec.source)
+        : sumMetric(shared, playerId, spec.source);
+
+    /** The member's baseline mean, the half of the swap the mean carries. */
+    const meanOf = (playerId: number, spec: Spec): number =>
+      baselineMean(playerId, spec.kind === "rule" ? `salary:${spec.source}` : spec.source);
+
+    /** Both members' deltas recompute, and differ, so a swap cannot pass. */
+    const expectColumn = (
+      row: PairRow,
+      shared: number[],
+      aId: number,
+      bId: number,
+      spec: Spec,
+    ) => {
+      const aDelta = row[`a_${spec.column}_delta` as keyof PairRow] as number;
+      const bDelta = row[`b_${spec.column}_delta` as keyof PairRow] as number;
+      const expected = (playerId: number) =>
+        rawSum(shared, playerId, spec) - meanOf(playerId, spec) * shared.length;
+      // Non-vacuous first: the members differ, so swapping the two columns
+      // changes a value the recomputation below reads.
+      expect(aDelta).not.toBe(bDelta);
+      expect(aDelta).toBe(expected(aId));
+      expect(bDelta).toBe(expected(bId));
+      // The baseline line of the swap carries distinct data as well, so a
+      // swap of just the *_baseline columns is caught too.
+      expect(meanOf(aId, spec)).not.toBe(meanOf(bId, spec));
+    };
+
+    // Pair 1: the swap fires, so a missing CASE reports the other member's
+    // column for every one of the five.
+    const swapRow = pairRow("catherine desloges", "jon rowe");
+    expect(swapRow).toBeDefined();
+    if (swapRow === undefined) return;
+    expect(swapRow.player_a).toBe("catherine desloges");
+    expect(swapRow.player_b).toBe("jon rowe");
+    const catherineId = idOf("catherine desloges");
+    const jonId = idOf("jon rowe");
+    expect(catherineId).toBeGreaterThan(jonId); // the swap is load-bearing here
+    const swapShared = sharedPointIds(catherineId, jonId);
+    expect(swapShared).toHaveLength(13);
+    expect(swapRow.points_together).toBe(swapShared.length);
+    for (const spec of columns) {
+      expectColumn(swapRow, swapShared, catherineId, jonId, spec);
+    }
+
+    // Pair 2: the raw shared-point amounts differ for the three stat columns
+    // catherine/chelsea leaves at 0, including the pulls column whose sums
+    // pair 1 shares, so a swap of just the *_with_b value lines is caught.
+    const sumRow = pairRow("eric moore", "jon rowe");
+    expect(sumRow).toBeDefined();
+    if (sumRow === undefined) return;
+    expect(sumRow.player_a).toBe("eric moore");
+    expect(sumRow.player_b).toBe("jon rowe");
+    const ericId = idOf("eric moore");
+    const sumShared = sharedPointIds(ericId, jonId);
+    expect(sumShared).toHaveLength(23);
+    expect(sumRow.points_together).toBe(sumShared.length);
+    for (const spec of amountColumns) {
+      expect(rawSum(sumShared, ericId, spec)).not.toBe(rawSum(sumShared, jonId, spec));
+      expectColumn(sumRow, sumShared, ericId, jonId, spec);
+    }
+  });
+
   it("forms no teammate pairs for an outside-line actor's point", () => {
     // Geoff Solomon is the fixture's only event actor outside both recorded
     // lines: at point 24 his resolved team is that point's offence team, so
