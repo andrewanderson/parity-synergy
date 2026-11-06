@@ -235,13 +235,14 @@ export function writeGameFacts(
         );
         (line === "offense" ? offenseSide : defenseSide).push({ id: playerId, touches });
 
+        // The ledger holds an entry for every line player and for any
+        // event actor who earned something on the point. An outside-line
+        // actor whose events earned nothing (a pull, say) has no entry:
+        // the appearance is still required, with a salary of 0, exactly as
+        // a player with no events gets 0. Throwing here would abort a
+        // legitimate game over a player who was paid nothing.
         const salary = salaryByKey.get(key);
-        if (salary === undefined) {
-          throw new Error(
-            `parity-mcp ledger has no entry for ${raw} on point ${point.pointNumber}`,
-          );
-        }
-        insertMetric.run(pointId, playerId, "salary", salary.total);
+        insertMetric.run(pointId, playerId, "salary", salary?.total ?? 0);
         if (stat !== undefined && stat.touches > 0) {
           for (const [metric, value] of Object.entries(stat.counts)) {
             insertMetric.run(pointId, playerId, metric, value);
