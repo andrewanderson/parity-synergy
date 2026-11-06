@@ -1,0 +1,32 @@
+{
+  "name": "parity-synergy",
+  "version": "0.1.0",
+  "license": "UNLENSED",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "parity-synergy": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "mcp": "node dist/mcp/index.js",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit",
+    "ingest": "tsx src/cli.ts ingest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "better-sqlite3": "^12.4.6",
+    "parity-mcp": "file:../parity-mcp",
+    "zod": "^3.25.48"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.29",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "4.1.10"
+  }
+}
