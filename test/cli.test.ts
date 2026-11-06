@@ -12,7 +12,7 @@ import { openDb, type Db } from "../src/store/db.js";
 import { writeGameFacts } from "../src/store/facts.js";
 import { recomputeBaselines } from "../src/store/baselines.js";
 import { evaluateTeam } from "../src/query/teams.js";
-import { dbPathFromArgv, formatCsvRow, parseArgs, resolveBaseUrl, run } from "../src/cli.js";
+import { formatCsvRow, parseArgs, resolveBaseUrl, run } from "../src/cli.js";
 
 const fixturePath = path.resolve(
   process.cwd(),
@@ -422,15 +422,44 @@ describe("cli", () => {
     ).toBe("http://flag.example");
   });
 
-  it("finds the --db path in raw argv for the entry point", () => {
-    expect(dbPathFromArgv(["leaderboard", "--db", "x.db"])).toBe("x.db");
-    expect(dbPathFromArgv(["--db=x.db", "leaderboard"])).toBe("x.db");
-    expect(dbPathFromArgv(["leaderboard", "--db", "a.db", "--db", "b.db"])).toBe("b.db");
-    expect(dbPathFromArgv(["leaderboard"])).toBeUndefined();
-    // A --db with no usable value yields the default, and `run` reports
-    // the missing value itself.
-    expect(dbPathFromArgv(["leaderboard", "--db"])).toBeUndefined();
-    expect(dbPathFromArgv(["leaderboard", "--db", "--limit", "5"])).toBeUndefined();
+  it("rejects a --db with no usable value", async () => {
+    // The value is read inside `run`, so a bare `--db` is reported by the
+    // same code path as any other bad flag, with no store opened first.
+    const bare = await run(["leaderboard", "--db"], { db });
+    expect(bare.code).not.toBe(0);
+    expect(bare.stderr).toContain("--db needs a value");
+    expect(bare.stdout).toBe("");
+
+    const flagNext = await run(["leaderboard", "--db", "--limit", "5"], { db });
+    expect(flagNext.code).not.toBe(0);
+    expect(flagNext.stderr).toContain("--db needs a value");
+
+    // The --flag=value form reaches the store it names.
+    const equals = path.join(dir, "equals-form.db");
+    const ok = await run(["leaderboard", `--db=${equals}`], { db });
+    expect(ok.code).toBe(0);
+    expect(ok.stdout.split("\n")[0]).toBe(`created a new empty store at ${equals}`);
+  });
+
+  it("says so when --db creates a new empty store instead of reporting an empty result", async () => {
+    const fresh = path.join(dir, "typo-path.db");
+    const created = await run(["leaderboard", "--db", fresh], { db });
+    expect(created.code).toBe(0);
+    expect(created.stdout.split("\n")[0]).toBe(`created a new empty store at ${fresh}`);
+    expect(created.stdout).toContain("No pairs with at least 8 shared points");
+    expect(existsSync(fresh)).toBe(true);
+
+    // The same path a second time is no longer new, so the notice goes
+    // away and only the report is left.
+    const again = await run(["leaderboard", "--db", fresh], { db });
+    expect(again.code).toBe(0);
+    expect(again.stdout).not.toContain("created a new empty store");
+    expect(again.stdout.split("\n")).toHaveLength(2);
+
+    // The injected store was already there and is not re-created either.
+    const inherited = await run(["leaderboard", "--min-points", "9999"], { db });
+    expect(inherited.code).toBe(0);
+    expect(inherited.stdout).not.toContain("created a new empty store");
   });
 
   it("runs against the database named by --db instead of the injected one", async () => {

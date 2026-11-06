@@ -14,11 +14,22 @@ import {
 import { opponentEffects } from "./query/opponents.js";
 import { evaluateTeam } from "./query/teams.js";
 import { playerIdFor } from "./store/baselines.js";
-import { openDb, type Db } from "./store/db.js";
+import { openDb, storeFileState, type Db } from "./store/db.js";
 import { ingestLeagues } from "./store/ingest.js";
 
-/** Everything `run` needs from its caller: an open store and, for `ingest`, a source. */
+/**
+ * Everything `run` needs from its caller: an already-open store to use
+ * when the invocation does not name one, and, for `ingest`, a source.
+ * `run` opens and closes its own store when `--db` is given, or when
+ * there is no store to inherit.
+ */
 export type CliDeps = {
+  db?: Db;
+  source?: DataSource;
+};
+
+/** The resolved dependencies a subcommand runs against: an open store, always. */
+type ResolvedDeps = {
   db: Db;
   source?: DataSource;
 };
@@ -273,29 +284,6 @@ export function resolveBaseUrl(
 }
 
 /**
- * The `--db` path carried by raw argv, for the entry point: a `--db
- * <path>` token pair or a `--db=<path>` token, last one wins the way the
- * flag parser keeps it. A `--db` with no usable value yields undefined,
- * so the entry falls back to the default store and `run` reports the
- * missing value itself.
- */
-export function dbPathFromArgv(argv: string[]): string | undefined {
-  let found: string | undefined;
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i]!;
-    if (token.startsWith("--db=")) {
-      found = token.slice("--db=".length);
-      continue;
-    }
-    if (token === "--db") {
-      const next = argv[i + 1];
-      found = next !== undefined && !next.startsWith("--") ? next : undefined;
-    }
-  }
-  return found;
-}
-
-/**
  * `ingest --leagues <ids>`: fetch, verify, and store every listed game,
  * one line per game and a summary line. The caller-supplied source wins
  * over `--base-url`, so tests never touch the network; otherwise the
@@ -303,7 +291,7 @@ export function dbPathFromArgv(argv: string[]): string | undefined {
  * precedence: `--base-url`, then `PARITY_API_BASE_URL`, then the local
  * default.
  */
-async function cmdIngest(parsed: ParsedArgs, deps: CliDeps, out: string[]): Promise<number> {
+async function cmdIngest(parsed: ParsedArgs, deps: ResolvedDeps, out: string[]): Promise<number> {
   const rawLeagues = flagString(parsed, "leagues");
   if (rawLeagues === undefined) {
     throw new CliError("ingest requires --leagues <comma-separated ids>");
@@ -348,7 +336,7 @@ async function cmdIngest(parsed: ParsedArgs, deps: CliDeps, out: string[]): Prom
  * an error naming that set, never a silent ordering by some other
  * metric.
  */
-function cmdLeaderboard(parsed: ParsedArgs, deps: CliDeps, out: string[]): number {
+function cmdLeaderboard(parsed: ParsedArgs, deps: ResolvedDeps, out: string[]): number {
   const metric = flagString(parsed, "metric") ?? "salary";
   if (!isSupportedMetric(metric)) {
     throw new CliError(`Unknown metric: ${metric}; supported: ${PAIR_METRICS.join(", ")}`);
@@ -368,7 +356,7 @@ function cmdLeaderboard(parsed: ParsedArgs, deps: CliDeps, out: string[]): numbe
 }
 
 /** `pair <player-a> <player-b>`: the full `pair_effects` row, or a not-found exit. */
-function cmdPair(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]): number {
+function cmdPair(parsed: ParsedArgs, deps: ResolvedDeps, out: string[], err: string[]): number {
   const playerA = positional(parsed, 0);
   const playerB = positional(parsed, 1);
   if (playerA === undefined || playerB === undefined) {
@@ -394,7 +382,7 @@ function cmdPair(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]
  * qualifying opponents are different facts: the first is an error, the
  * second an empty report.
  */
-function cmdOpponents(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]): number {
+function cmdOpponents(parsed: ParsedArgs, deps: ResolvedDeps, out: string[], err: string[]): number {
   const player = positional(parsed, 0);
   if (player === undefined) throw new CliError("opponents requires <player>");
   const minPoints = reportMinPoints(parsed, "min-points", MIN_SHARED_POINTS);
@@ -416,7 +404,7 @@ function cmdOpponents(parsed: ParsedArgs, deps: CliDeps, out: string[], err: str
  * are not in the store are reported to stderr rather than dropped
  * silently; the evaluation of the resolved players still succeeds.
  */
-function cmdEvaluate(parsed: ParsedArgs, deps: CliDeps, out: string[], err: string[]): number {
+function cmdEvaluate(parsed: ParsedArgs, deps: ResolvedDeps, out: string[], err: string[]): number {
   const teamFlag = flagString(parsed, "team");
   if (teamFlag === undefined) {
     throw new CliError('evaluate requires --team "A,B,C,D,E,F"');
@@ -458,7 +446,7 @@ function cmdEvaluate(parsed: ParsedArgs, deps: CliDeps, out: string[], err: stri
  * reaches SQL as text, so the allowlist check runs before the statement
  * is built and rejects everything else.
  */
-async function cmdExportCsv(parsed: ParsedArgs, deps: CliDeps, out: string[]): Promise<number> {
+async function cmdExportCsv(parsed: ParsedArgs, deps: ResolvedDeps, out: string[]): Promise<number> {
   const table = flagString(parsed, "table");
   if (table === undefined) throw new CliError("export-csv requires --table <name>");
   if (!EXPORTABLE_TABLES.includes(table)) {
@@ -484,7 +472,7 @@ async function cmdExportCsv(parsed: ParsedArgs, deps: CliDeps, out: string[]): P
 async function dispatch(
   command: string,
   parsed: ParsedArgs,
-  deps: CliDeps,
+  deps: ResolvedDeps,
   out: string[],
   err: string[],
 ): Promise<number> {
@@ -511,9 +499,13 @@ async function dispatch(
  * Run one CLI invocation. Output is collected into the returned strings
  * and never written to the console, so tests can assert on it and the
  * entry point decides how to print it. Usage errors and command failures
- * become exit code 1 with the message on stderr; `--db` opens its own
- * store for the invocation and closes it before returning, overriding the
- * injected one.
+ * become exit code 1 with the message on stderr.
+ *
+ * The store is opened exactly once: an already-open one from the caller
+ * is used when the invocation does not name a path, otherwise `run`
+ * opens it and closes it before returning. When `run` opens a store whose
+ * file was not there before, the first line of stdout says so, so a report
+ * over an empty store can never pass for a real result.
  */
 export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
   const parsed = parseArgs(args.slice(1));
@@ -537,7 +529,16 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
   try {
     validateFlags(subcommand, parsed);
     const dbPath = flagString(parsed, "db");
-    const db = dbPath === undefined ? deps.db : (owned = openDb(dbPath));
+    // Recorded before the open: afterwards a file that was not there is
+    // indistinguishable from one that always was.
+    const store = storeFileState(dbPath);
+    let db: Db;
+    if (deps.db !== undefined && dbPath === undefined) {
+      db = deps.db;
+    } else {
+      db = owned = openDb(dbPath);
+      if (!store.existed) out.push(`created a new empty store at ${store.path}`);
+    }
     code = await dispatch(subcommand, parsed, { db, source: deps.source }, out, err);
   } catch (error) {
     err.push(error instanceof Error ? error.message : String(error));
@@ -548,18 +549,14 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
   return { code, stdout: out.join("\n"), stderr: err.join("\n") };
 }
 
-// Entry point: open the store, run the invocation, print what it collected,
-// and exit with its code. The `--db` path is read straight from argv here,
-// because `run` receives an already-open store: without the pre-scan the
-// entry would create and migrate the default store even when `--db` points
-// elsewhere. The guard keeps importing this module (by the tests) free of
-// side effects.
+// Entry point: run the invocation with no store of its own, print what it
+// collected, and exit with its code. `run` opens the store once (the
+// default path when `--db` is absent) and closes it; the entry holding a
+// second connection would only cost a migration and a lock. The guard
+// keeps importing this module (by the tests) free of side effects.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
-  const db = openDb(dbPathFromArgv(args));
-  const result = await run(args, { db });
+  const result = await run(process.argv.slice(2), {});
   if (result.stdout !== "") console.log(result.stdout);
   if (result.stderr !== "") console.error(result.stderr);
-  db.close();
   process.exit(result.code);
 }

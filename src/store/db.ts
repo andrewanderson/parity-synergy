@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
 import { resolveDbPath } from "../paths.js";
 import { migrate } from "./schema.js";
@@ -20,4 +21,15 @@ export function openDb(dbPath?: string): Db {
     throw err;
   }
   return db;
+}
+
+/**
+ * The path `openDb` would use and whether its file is already there.
+ * Callers check this *before* opening: afterwards the created file is
+ * indistinguishable from one that was always there, and a report over an
+ * empty store would look like a real result rather than a typo'd path.
+ */
+export function storeFileState(dbPath?: string): { path: string; existed: boolean } {
+  const resolved = resolveDbPath(dbPath);
+  return { path: resolved, existed: existsSync(resolved) };
 }
