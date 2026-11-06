@@ -3,7 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ParityApiSource } from "parity-mcp/data/api";
 import type { DataSource } from "parity-mcp/data/source";
-import { MIN_SHARED_POINTS, nameKeyFor, pairDetail, pairLeaderboard } from "./query/pairs.js";
+import {
+  MIN_SHARED_POINTS,
+  PAIR_METRICS,
+  isSupportedMetric,
+  nameKeyFor,
+  pairDetail,
+  pairLeaderboard,
+} from "./query/pairs.js";
 import { opponentEffects } from "./query/opponents.js";
 import { evaluateTeam } from "./query/teams.js";
 import { playerIdFor } from "./store/baselines.js";
@@ -228,20 +235,16 @@ function renderTable(columns: string[], rows: Row[]): string[] {
 }
 
 /**
- * The `a_` and `b_` effect columns for a leaderboard metric. `salary`
- * reports the shrunk delta; any other metric reports its own delta, and a
- * name the view does not expose falls back to the shrunk delta, matching
- * the query layer's fallback for unknown metrics. The check reads the
- * row's own keys, so the metric name never reaches SQL.
+ * The `a_` and `b_` effect columns for a leaderboard metric: `salary`
+ * reports the shrunk delta, every other supported metric its own delta.
+ * The caller validates the metric against the supported set first, so
+ * this only ever names columns the view exposes, and it does not consult
+ * the row: an empty result must still label its columns with the metric
+ * that was asked for.
  */
-function effectColumns(metric: string, row: Row | undefined): [string, string] {
+function effectColumns(metric: string): [string, string] {
   const suffix = metric === "salary" ? "shrunk_delta" : `${metric}_delta`;
-  const aColumn = `a_${suffix}`;
-  const bColumn = `b_${suffix}`;
-  if (row !== undefined && !Object.hasOwn(row, aColumn)) {
-    return ["a_shrunk_delta", "b_shrunk_delta"];
-  }
-  return [aColumn, bColumn];
+  return [`a_${suffix}`, `b_${suffix}`];
 }
 
 /** One CSV field: quoted only when it holds a comma, a double quote, or a newline. */
@@ -341,17 +344,22 @@ async function cmdIngest(parsed: ParsedArgs, deps: CliDeps, out: string[]): Prom
  * (default 8, the shrinkage half-weight point, never below the 5-point
  * floor), ordered by the requested metric and capped by `--limit`. Every
  * row shows `points_together` beside its effect, so no effect appears
- * without the sample it came from.
+ * without the sample it came from. A metric outside the supported set is
+ * an error naming that set, never a silent ordering by some other
+ * metric.
  */
 function cmdLeaderboard(parsed: ParsedArgs, deps: CliDeps, out: string[]): number {
   const metric = flagString(parsed, "metric") ?? "salary";
+  if (!isSupportedMetric(metric)) {
+    throw new CliError(`Unknown metric: ${metric}; supported: ${PAIR_METRICS.join(", ")}`);
+  }
   const minPoints = reportMinPoints(parsed, "min-points", LEADERBOARD_MIN_POINTS_DEFAULT);
   const limit = flagInteger(parsed, "limit", 50);
   // A limit below one would print a "no pairs" line for a store that has
   // pairs, so it is refused rather than silently misreported.
   if (limit < 1) throw new CliError("--limit must be at least 1");
   const rows = pairLeaderboard(deps.db, { metric, minPoints, limit });
-  const [aColumn, bColumn] = effectColumns(metric, rows[0]);
+  const [aColumn, bColumn] = effectColumns(metric);
   out.push(...renderTable(["player_a", "player_b", "points_together", aColumn, bColumn], rows));
   if (rows.length === 0) {
     out.push(`No pairs with at least ${minPoints} shared points`);

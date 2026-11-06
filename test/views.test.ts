@@ -63,6 +63,16 @@ type PairRow = {
   b_throw_aways_delta: number;
   a_threw_drops_delta: number;
   b_threw_drops_delta: number;
+  a_second_assists_delta: number;
+  b_second_assists_delta: number;
+  a_d_blocks_delta: number;
+  b_d_blocks_delta: number;
+  a_completions_delta: number;
+  b_completions_delta: number;
+  a_catches_delta: number;
+  b_catches_delta: number;
+  a_pulls_delta: number;
+  b_pulls_delta: number;
   a_hold_delta: number;
   b_hold_delta: number;
   a_break_delta: number;
@@ -398,6 +408,18 @@ describe("pair_effects view", () => {
     expect(row.b_goals_delta).toBe(
       sumMetric(shared, bId, "goals") - baselineMean(bId, "goals") * shared.length,
     );
+
+    // The five statistics the design's metric list needs and the view did
+    // not have: the same recomputation, per member, so a swapped a_/b_
+    // column cannot pass here.
+    for (const metric of ["second_assists", "d_blocks", "completions", "catches", "pulls"]) {
+      expect(row[`a_${metric}_delta` as keyof PairRow]).toBe(
+        sumMetric(shared, aId, metric) - baselineMean(aId, metric) * shared.length,
+      );
+      expect(row[`b_${metric}_delta` as keyof PairRow]).toBe(
+        sumMetric(shared, bId, metric) - baselineMean(bId, metric) * shared.length,
+      );
+    }
 
     // Rule deltas: salary-rule units, the synergy signal.
     expect(row.a_hold_delta).toBe(

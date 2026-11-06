@@ -4,8 +4,10 @@ export const SCHEMA_VERSION = 1;
 
 /**
  * The `pair_effects` view: one row per unordered teammate pair, with the
- * salary, statistic, and salary-rule deltas of each member on the points
- * they shared, shrunk by n / (n + 8). SQLite has no `CREATE OR REPLACE
+ * salary, all ten statistic, and salary-rule deltas of each member on the
+ * points they shared, shrunk by n / (n + 8). Every metric the design lists
+ * for the pair report has a column here, so `--metric` never has to fall
+ * back to a different question. SQLite has no `CREATE OR REPLACE
  * VIEW`, so the statement drops and recreates the view on every migrate.
  */
 export const PAIR_EFFECTS_VIEW_SQL = `
@@ -71,6 +73,16 @@ pivoted AS (
     SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'throw_aways' THEN m.actual ELSE 0 END) AS val_b_throw_aways,
     SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'threw_drops' THEN m.actual ELSE 0 END) AS val_a_threw_drops,
     SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'threw_drops' THEN m.actual ELSE 0 END) AS val_b_threw_drops,
+    SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'second_assists' THEN m.actual ELSE 0 END) AS val_a_second_assists,
+    SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'second_assists' THEN m.actual ELSE 0 END) AS val_b_second_assists,
+    SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'd_blocks' THEN m.actual ELSE 0 END) AS val_a_d_blocks,
+    SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'd_blocks' THEN m.actual ELSE 0 END) AS val_b_d_blocks,
+    SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'completions' THEN m.actual ELSE 0 END) AS val_a_completions,
+    SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'completions' THEN m.actual ELSE 0 END) AS val_b_completions,
+    SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'catches' THEN m.actual ELSE 0 END) AS val_a_catches,
+    SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'catches' THEN m.actual ELSE 0 END) AS val_b_catches,
+    SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'pulls' THEN m.actual ELSE 0 END) AS val_a_pulls,
+    SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'pulls' THEN m.actual ELSE 0 END) AS val_b_pulls,
     SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'salary:HOLD' THEN m.actual ELSE 0 END) AS val_a_hold,
     SUM(CASE WHEN m.member_id = p.id_b AND m.metric = 'salary:HOLD' THEN m.actual ELSE 0 END) AS val_b_hold,
     SUM(CASE WHEN m.member_id = p.id_a AND m.metric = 'salary:BREAK' THEN m.actual ELSE 0 END) AS val_a_break,
@@ -100,6 +112,11 @@ baseline_pivot AS (
          COALESCE(MAX(CASE WHEN metric = 'drops' THEN mean END), 0) AS drops_mean,
          COALESCE(MAX(CASE WHEN metric = 'throw_aways' THEN mean END), 0) AS throw_aways_mean,
          COALESCE(MAX(CASE WHEN metric = 'threw_drops' THEN mean END), 0) AS threw_drops_mean,
+         COALESCE(MAX(CASE WHEN metric = 'second_assists' THEN mean END), 0) AS second_assists_mean,
+         COALESCE(MAX(CASE WHEN metric = 'd_blocks' THEN mean END), 0) AS d_blocks_mean,
+         COALESCE(MAX(CASE WHEN metric = 'completions' THEN mean END), 0) AS completions_mean,
+         COALESCE(MAX(CASE WHEN metric = 'catches' THEN mean END), 0) AS catches_mean,
+         COALESCE(MAX(CASE WHEN metric = 'pulls' THEN mean END), 0) AS pulls_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:HOLD' THEN mean END), 0) AS hold_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:BREAK' THEN mean END), 0) AS break_mean,
          COALESCE(MAX(CASE WHEN metric = 'salary:GOAL' THEN mean END), 0) AS goal_mean,
@@ -135,6 +152,16 @@ swapped AS (
     CASE WHEN p.key_a < p.key_b THEN p.val_b_throw_aways ELSE p.val_a_throw_aways END AS b_throw_aways_with_b,
     CASE WHEN p.key_a < p.key_b THEN p.val_a_threw_drops ELSE p.val_b_threw_drops END AS a_threw_drops_with_b,
     CASE WHEN p.key_a < p.key_b THEN p.val_b_threw_drops ELSE p.val_a_threw_drops END AS b_threw_drops_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_a_second_assists ELSE p.val_b_second_assists END AS a_second_assists_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_b_second_assists ELSE p.val_a_second_assists END AS b_second_assists_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_a_d_blocks ELSE p.val_b_d_blocks END AS a_d_blocks_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_b_d_blocks ELSE p.val_a_d_blocks END AS b_d_blocks_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_a_completions ELSE p.val_b_completions END AS a_completions_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_b_completions ELSE p.val_a_completions END AS b_completions_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_a_catches ELSE p.val_b_catches END AS a_catches_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_b_catches ELSE p.val_a_catches END AS b_catches_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_a_pulls ELSE p.val_b_pulls END AS a_pulls_with_b,
+    CASE WHEN p.key_a < p.key_b THEN p.val_b_pulls ELSE p.val_a_pulls END AS b_pulls_with_b,
     CASE WHEN p.key_a < p.key_b THEN p.val_a_hold ELSE p.val_b_hold END AS a_hold_with_b,
     CASE WHEN p.key_a < p.key_b THEN p.val_b_hold ELSE p.val_a_hold END AS b_hold_with_b,
     CASE WHEN p.key_a < p.key_b THEN p.val_a_break ELSE p.val_b_break END AS a_break_with_b,
@@ -155,6 +182,16 @@ swapped AS (
     CASE WHEN p.key_a < p.key_b THEN bb.throw_aways_mean ELSE ba.throw_aways_mean END AS b_throw_aways_baseline,
     CASE WHEN p.key_a < p.key_b THEN ba.threw_drops_mean ELSE bb.threw_drops_mean END AS a_threw_drops_baseline,
     CASE WHEN p.key_a < p.key_b THEN bb.threw_drops_mean ELSE ba.threw_drops_mean END AS b_threw_drops_baseline,
+    CASE WHEN p.key_a < p.key_b THEN ba.second_assists_mean ELSE bb.second_assists_mean END AS a_second_assists_baseline,
+    CASE WHEN p.key_a < p.key_b THEN bb.second_assists_mean ELSE ba.second_assists_mean END AS b_second_assists_baseline,
+    CASE WHEN p.key_a < p.key_b THEN ba.d_blocks_mean ELSE bb.d_blocks_mean END AS a_d_blocks_baseline,
+    CASE WHEN p.key_a < p.key_b THEN bb.d_blocks_mean ELSE ba.d_blocks_mean END AS b_d_blocks_baseline,
+    CASE WHEN p.key_a < p.key_b THEN ba.completions_mean ELSE bb.completions_mean END AS a_completions_baseline,
+    CASE WHEN p.key_a < p.key_b THEN bb.completions_mean ELSE ba.completions_mean END AS b_completions_baseline,
+    CASE WHEN p.key_a < p.key_b THEN ba.catches_mean ELSE bb.catches_mean END AS a_catches_baseline,
+    CASE WHEN p.key_a < p.key_b THEN bb.catches_mean ELSE ba.catches_mean END AS b_catches_baseline,
+    CASE WHEN p.key_a < p.key_b THEN ba.pulls_mean ELSE bb.pulls_mean END AS a_pulls_baseline,
+    CASE WHEN p.key_a < p.key_b THEN bb.pulls_mean ELSE ba.pulls_mean END AS b_pulls_baseline,
     CASE WHEN p.key_a < p.key_b THEN ba.hold_mean ELSE bb.hold_mean END AS a_hold_baseline,
     CASE WHEN p.key_a < p.key_b THEN bb.hold_mean ELSE ba.hold_mean END AS b_hold_baseline,
     CASE WHEN p.key_a < p.key_b THEN ba.break_mean ELSE bb.break_mean END AS a_break_baseline,
@@ -198,6 +235,16 @@ SELECT
   b_throw_aways_with_b - b_throw_aways_baseline * points_together AS b_throw_aways_delta,
   a_threw_drops_with_b - a_threw_drops_baseline * points_together AS a_threw_drops_delta,
   b_threw_drops_with_b - b_threw_drops_baseline * points_together AS b_threw_drops_delta,
+  a_second_assists_with_b - a_second_assists_baseline * points_together AS a_second_assists_delta,
+  b_second_assists_with_b - b_second_assists_baseline * points_together AS b_second_assists_delta,
+  a_d_blocks_with_b - a_d_blocks_baseline * points_together AS a_d_blocks_delta,
+  b_d_blocks_with_b - b_d_blocks_baseline * points_together AS b_d_blocks_delta,
+  a_completions_with_b - a_completions_baseline * points_together AS a_completions_delta,
+  b_completions_with_b - b_completions_baseline * points_together AS b_completions_delta,
+  a_catches_with_b - a_catches_baseline * points_together AS a_catches_delta,
+  b_catches_with_b - b_catches_baseline * points_together AS b_catches_delta,
+  a_pulls_with_b - a_pulls_baseline * points_together AS a_pulls_delta,
+  b_pulls_with_b - b_pulls_baseline * points_together AS b_pulls_delta,
   a_hold_with_b - a_hold_baseline * points_together AS a_hold_delta,
   b_hold_with_b - b_hold_baseline * points_together AS b_hold_delta,
   a_break_with_b - a_break_baseline * points_together AS a_break_delta,

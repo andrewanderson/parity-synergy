@@ -188,16 +188,34 @@ describe("cli", () => {
     expect(zero.stderr).toContain("--limit");
   });
 
-  it("shows the effect column for the requested metric and falls back safely", async () => {
+  it("shows the effect column for the requested metric", async () => {
     const goals = await run(["leaderboard", "--metric", "goals"], { db });
     expect(goals.code).toBe(0);
     expect(goals.stdout.split("\n")[0]).toContain("a_goals_delta");
 
-    // An inherited object key must behave like any unknown metric: fall
-    // back to the shrunk salary delta rather than crash the query.
+    // A statistic that had no column of its own used to be answered with
+    // the salary leaderboard; it now has a column and a real ordering.
+    const catches = await run(["leaderboard", "--metric", "catches"], { db });
+    expect(catches.code).toBe(0);
+    expect(catches.stdout.split("\n")[0]).toContain("a_catches_delta");
+  });
+
+  it("rejects an unknown metric instead of printing the salary leaderboard", async () => {
+    const unknown = await run(["leaderboard", "--metric", "catch"], { db });
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.stdout).toBe("");
+    expect(unknown.stderr).toContain("Unknown metric: catch");
+    expect(unknown.stderr).toContain("supported:");
+    expect(unknown.stderr).toContain("salary");
+    expect(unknown.stderr).toContain("second_assists");
+    expect(unknown.stderr).toContain("break");
+
+    // An inherited object key is unknown too, not a free pass into the
+    // map's prototype chain.
     const inherited = await run(["leaderboard", "--metric", "constructor"], { db });
-    expect(inherited.code).toBe(0);
-    expect(inherited.stdout.split("\n")[0]).toContain("a_shrunk_delta");
+    expect(inherited.code).not.toBe(0);
+    expect(inherited.stdout).toBe("");
+    expect(inherited.stderr).toContain("Unknown metric: constructor");
   });
 
   it("reports an empty leaderboard instead of failing", async () => {

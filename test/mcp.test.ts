@@ -203,6 +203,22 @@ describe("synergy MCP server", () => {
     }
   });
 
+  it("rejects an unknown leaderboard metric with the supported set", async () => {
+    // The metric is the one argument that would otherwise silently select
+    // a different column, so it is an enum: the SDK rejects an unknown
+    // value as a plain-text -32602 naming the supported set, rather than
+    // the handler answering a question nobody asked.
+    const result = await call(client, "synergy_pair_leaderboard", { metric: "catch" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("MCP error -32602");
+    expect(result.text).toContain("Unknown metric; supported:");
+    expect(result.text).toContain("salary");
+    expect(result.text).toContain("second_assists");
+    expect(result.text).toContain("break");
+  });
+
   it("synergy_pair_detail returns the fixture's most-shared pair", async () => {
     const result = await call(client, "synergy_pair_detail", {
       playerA: "Eric Moore",

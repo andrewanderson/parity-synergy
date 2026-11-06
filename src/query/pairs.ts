@@ -18,12 +18,36 @@ const METRIC_SORT_COLUMNS: Record<string, string> = {
   salary: "a_shrunk_delta",
   goals: "a_goals_delta",
   assists: "a_assists_delta",
-  drops: "a_drops_delta",
+  second_assists: "a_second_assists_delta",
+  d_blocks: "a_d_blocks_delta",
+  completions: "a_completions_delta",
   throw_aways: "a_throw_aways_delta",
   threw_drops: "a_threw_drops_delta",
+  catches: "a_catches_delta",
+  drops: "a_drops_delta",
+  pulls: "a_pulls_delta",
   hold: "a_hold_delta",
   break: "a_break_delta",
 };
+
+/**
+ * The metrics a pair report can be ordered by, in the map's own order.
+ * Derived from the map rather than restated, so the list a caller is told
+ * about can never drift from the columns the query can actually sort by.
+ */
+export const PAIR_METRICS: [string, ...string[]] = Object.keys(
+  METRIC_SORT_COLUMNS,
+) as [string, ...string[]];
+
+/**
+ * Whether `metric` names a column the leaderboard can order by. The report
+ * surfaces call this before querying and reject anything else with the
+ * supported set, so an unknown metric is an error rather than a silent
+ * answer to a different question.
+ */
+export function isSupportedMetric(metric: string): boolean {
+  return Object.hasOwn(METRIC_SORT_COLUMNS, metric);
+}
 
 /**
  * The teammate leaderboard: pairs with at least `minPoints` shared points,
@@ -32,6 +56,10 @@ const METRIC_SORT_COLUMNS: Record<string, string> = {
  * size (`points_together`) alongside its effects. The final `player_a`
  * tie-breaker makes the ordering total when the metric column and the sample
  * size tie.
+ *
+ * A metric outside the map never reaches SQL: the lookup falls back to the
+ * default column, which is the SQL-safety backstop the report surfaces
+ * validate in front of, not a way to answer an unknown metric.
  */
 export function pairLeaderboard(
   db: Db,
@@ -41,7 +69,7 @@ export function pairLeaderboard(
   const limit = options.limit ?? 50;
   const order = options.order ?? "desc";
   const metric = options.metric ?? "salary";
-  const sortColumn = Object.hasOwn(METRIC_SORT_COLUMNS, metric)
+  const sortColumn = isSupportedMetric(metric)
     ? METRIC_SORT_COLUMNS[metric]!
     : "a_shrunk_delta";
   const direction = order === "asc" ? "ASC" : "DESC";

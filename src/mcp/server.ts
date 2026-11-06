@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Db } from "../store/db.js";
-import { MIN_SHARED_POINTS, pairDetail, pairLeaderboard } from "../query/pairs.js";
+import { MIN_SHARED_POINTS, PAIR_METRICS, pairDetail, pairLeaderboard } from "../query/pairs.js";
 import { opponentEffects, playerProfile } from "../query/opponents.js";
 import { evaluateTeam } from "../query/teams.js";
 
@@ -91,9 +91,17 @@ export function createSynergyServer(options: SynergyServerOptions): McpServer {
     {
       description:
         "List teammate pairs ordered by a metric's effect, with points_together beside every effect; pairs below 5 shared points are excluded." +
+        ` Supported metrics: ${PAIR_METRICS.join(", ")}.` +
         ERROR_NOTE,
       inputSchema: {
-        metric: z.string().optional(),
+        // An enum rather than a plain string: the metric name is the one
+        // argument that would otherwise silently select a different column,
+        // so the SDK rejects an unknown one as a plain-text -32602 naming
+        // the supported set instead of the handler answering a question
+        // nobody asked.
+        metric: z.enum(PAIR_METRICS, {
+          errorMap: () => ({ message: `Unknown metric; supported: ${PAIR_METRICS.join(", ")}` }),
+        }).optional(),
         minPoints: z.number().int().optional(),
         limit: z.number().int().min(1).optional(),
         order: z.enum(["asc", "desc"]).optional(),

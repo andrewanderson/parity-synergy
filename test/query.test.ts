@@ -10,7 +10,13 @@ import type { ApiGame, SupportedLeague } from "parity-mcp/domain/types";
 import { writeGameFacts } from "../src/store/facts.js";
 import { playerIdFor, recomputeBaselines } from "../src/store/baselines.js";
 import { openDb, type Db } from "../src/store/db.js";
-import { MIN_SHARED_POINTS, pairDetail, pairLeaderboard, type PairRow } from "../src/query/pairs.js";
+import {
+  MIN_SHARED_POINTS,
+  PAIR_METRICS,
+  pairDetail,
+  pairLeaderboard,
+  type PairRow,
+} from "../src/query/pairs.js";
 import { opponentEffects, playerProfile, type OpponentRow } from "../src/query/opponents.js";
 import { evaluateTeam } from "../src/query/teams.js";
 
@@ -154,10 +160,31 @@ describe("pairLeaderboard", () => {
     }
   });
 
+  it("orders by its own column for every metric in the supported set", () => {
+    // The supported set is what the CLI and the MCP server hand to a
+    // caller, so every entry must name a real column and really order by
+    // it: a metric listed as supported but missing from the view would
+    // otherwise surface as an empty or mislabelled report.
+    expect(PAIR_METRICS.length).toBe(13);
+    for (const metric of PAIR_METRICS) {
+      const rows = pairLeaderboard(db, { metric, minPoints: MIN_SHARED_POINTS, limit: 20 });
+      expect(rows.length).toBeGreaterThan(0);
+      const column = `a_${metric === "salary" ? "shrunk_delta" : `${metric}_delta`}`;
+      const values = rows.map((row) => row[column]);
+      for (const value of values) expect(typeof value).toBe("number");
+      for (let i = 1; i < values.length; i++) {
+        expect(values[i] as number).toBeLessThanOrEqual(values[i - 1] as number);
+      }
+    }
+  });
+
   it("falls back to the shrunk delta for an unknown metric", () => {
-    // The metric name selects a column from a fixed map; anything else, up
-    // to and including an injection attempt, behaves like the default and
-    // leaves the store intact.
+    // This is the SQL-safety backstop, not the report's answer: the metric
+    // name selects a column from a fixed map, so anything else, up to and
+    // including an injection attempt, behaves like the default and leaves
+    // the store intact. The CLI and the MCP server validate first and
+    // reject an unknown metric with the supported set, so a caller never
+    // sees this fallback as a result.
     const fallback = pairLeaderboard(db, { metric: "no such metric" });
     expect(fallback).toEqual(pairLeaderboard(db, {}));
     const injected = pairLeaderboard(db, { metric: "a_shrunk_delta; DROP TABLE players--" });
