@@ -99,7 +99,7 @@ describe("fixture ground truth", () => {
     expect(points.n).toBe(45);
     expect(players.n).toBe(22);
     expect(viewCount("pair_effects")).toBe(96);
-    expect(viewCount("opponent_effects")).toBe(246);
+    expect(viewCount("opponent_effects")).toBe(236);
     expect(viewCount("player_baselines")).toBe(434);
   });
 });

@@ -21,9 +21,9 @@ type LedgerPlayer = FullGamePayload["salaryLedger"]["points"][number]["playerSal
  * per-point stats, player normalization, and team resolution are all read
  * from `payload` and `pointStats`, never recomputed here. The recorded line
  * rows define relationships: a line player's opponents are the opposing
- * line, and an event actor recorded on neither line is assigned the
- * defence side with `line_changed = 1`, facing the offense line they were
- * playing against.
+ * line, and an event actor recorded on neither line takes the side whose
+ * recorded team matches their resolved team, with `line_changed = 1`, so
+ * they face the other side and form no teammate pairs.
  *
  * Returns the distinct player ids that appeared in the game, in first-seen
  * order, plus any player whose facts this write removed, so the caller can
@@ -192,17 +192,28 @@ export function writeGameFacts(
         });
       }
 
-      // 5. Event actors on neither recorded line: assigned the defence side
-      // with line_changed = 1. They have no line peers, so they form no
-      // teammate pairs, but they faced the offense line and pair with it.
-      const actorSpecs: Array<{ key: string; raw: string }> = [];
+      // 5. Event actors on neither recorded line: assigned a side by the
+      // MCP's team resolution - the side whose recorded team equals the
+      // actor's resolved team, falling back to defence when the point's
+      // two teams are missing, equal, or the actor resolves to neither.
+      // They keep line_changed = 1, so they form no teammate pairs on the
+      // side they join; they meet the other side only as opponents.
+      const actorLine = (raw: string): "offense" | "defense" => {
+        if (offenseTeam === null || defenseTeam === null || offenseTeam === defenseTeam) {
+          return "defense";
+        }
+        const team = resolvePlayerTeam(raw, payload).team;
+        if (team === null) return "defense";
+        return team === offenseTeam ? "offense" : "defense";
+      };
+      const actorSpecs: Array<{ key: string; raw: string; line: "offense" | "defense" }> = [];
       for (const event of point.events) {
         for (const actor of [event.firstActor, event.secondActor]) {
           if (actor === null) continue;
           const key = normalizePlayerRef(actor).name.toLowerCase();
           if (seen.has(key)) continue;
           seen.add(key);
-          actorSpecs.push({ key, raw: actor });
+          actorSpecs.push({ key, raw: actor, line: actorLine(actor) });
         }
       }
 
@@ -254,7 +265,7 @@ export function writeGameFacts(
         writeAppearance(spec.key, spec.raw, spec.line, 0);
       }
       for (const spec of actorSpecs) {
-        writeAppearance(spec.key, spec.raw, "defense", 1);
+        writeAppearance(spec.key, spec.raw, spec.line, 1);
       }
 
       // 9-10. The salary decomposition: one row per rule holding that

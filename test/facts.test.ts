@@ -329,7 +329,7 @@ describe("writeGameFacts", () => {
 
     // Ledger-derived decompositions and opponent weights: 44 points x 6 x 6
     // x 2 directions, plus point 24 where the outside actor joins the
-    // defence line (6 x 7 x 2): 3168 + 84 = 3252.
+    // offence line (7 x 6 x 2): 3168 + 84 = 3252.
     const rules = db.prepare("SELECT COUNT(*) AS n FROM salary_rule").get() as { n: number };
     const components = db
       .prepare("SELECT COUNT(*) AS n FROM salary_components")
@@ -604,13 +604,15 @@ describe("writeGameFacts", () => {
     expect(geoffId).toBeDefined();
 
     // Point 24 is the fixture's only point with an actor on neither line.
+    // Geoff's resolved team is this point's offence team, so the team
+    // resolution puts him on the offence side; line_changed stays 1.
     const pointId = pointIdFor(db, 1000, 24);
     const appearance = db
       .prepare(
         "SELECT line, line_changed FROM appearances WHERE point_id = ? AND player_id = ?",
       )
       .get(pointId, geoffId) as { line: string; line_changed: number };
-    expect(appearance.line).toBe("defense");
+    expect(appearance.line).toBe("offense");
     expect(appearance.line_changed).toBe(1);
 
     // Their salary metric on that point equals the ledger total for it.
@@ -637,30 +639,31 @@ describe("writeGameFacts", () => {
       .get(geoffId) as { n: number };
     expect(gameSalary.n).toBe(101500);
 
-    // Opponent pairs run in both directions against the offense line, the
-    // line he was playing against, and never against the defence line he
-    // was assigned to (they are his own side, not his opponents).
+    // Opponent pairs run in both directions against the defence line, the
+    // line he was facing, and never against the offence line he joined:
+    // they are his own side, not his opponents.
     const offenseIds = appearanceIds(db, pointId, "offense");
     const defenseIds = appearanceIds(db, pointId, "defense");
-    expect(defenseIds).toContain(geoffId);
-    expect(opponentIds(db, pointId, geoffId)).toEqual(offenseIds);
-    for (const playerId of offenseIds) {
+    expect(offenseIds).toContain(geoffId);
+    expect(defenseIds).not.toContain(geoffId);
+    expect(opponentIds(db, pointId, geoffId)).toEqual(defenseIds);
+    for (const playerId of defenseIds) {
       expect(opponentIds(db, pointId, playerId)).toContain(geoffId);
     }
-    const defensePeers = defenseIds.filter((id) => id !== geoffId);
+    const offensePeers = offenseIds.filter((id) => id !== geoffId);
     const pairedWithPeer = db
       .prepare(
         `SELECT COUNT(*) AS n FROM opponent_weight
          WHERE point_id = ?
-           AND ((player_id = ? AND opponent_id IN (${defensePeers.map(() => "?").join(",")}))
-             OR (opponent_id = ? AND player_id IN (${defensePeers.map(() => "?").join(",")})))`,
+           AND ((player_id = ? AND opponent_id IN (${offensePeers.map(() => "?").join(",")}))
+             OR (opponent_id = ? AND player_id IN (${offensePeers.map(() => "?").join(",")})))`,
       )
       .get(
         pointId,
         geoffId,
-        ...defensePeers,
+        ...offensePeers,
         geoffId,
-        ...defensePeers,
+        ...offensePeers,
       ) as { n: number };
     expect(pairedWithPeer.n).toBe(0);
   });

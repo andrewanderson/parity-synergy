@@ -314,7 +314,7 @@ describe("cli", () => {
   it("exports every row of each allowlisted view", async () => {
     const cases: Array<[string, number]> = [
       ["pair_effects", 96],
-      ["opponent_effects", 246],
+      ["opponent_effects", 236],
       ["player_baselines", 434],
     ];
     for (const [table, expected] of cases) {

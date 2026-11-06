@@ -433,6 +433,52 @@ describe("pair_effects view", () => {
     );
     expect(row.b_negative_rate_baseline).toBe(bNegativeTotal / baselinePoints(bId));
   });
+
+  it("forms no teammate pairs for an outside-line actor's point", () => {
+    // Geoff Solomon is the fixture's only event actor outside both recorded
+    // lines: at point 24 his resolved team is that point's offence team, so
+    // he gets an offense appearance with line_changed = 1. The six offence
+    // players recorded on the point are his same-line co-appearances, but
+    // the teammate join requires line_changed = 0 on both sides, so point
+    // 24 never becomes a teammate point for any of them.
+    const geoffId = idOf("geoff solomon");
+    const point24 = pointIdFor(1000, 24);
+    const peers = db
+      .prepare(
+        `SELECT pl.player_id AS player_id, pl.name_key AS name_key FROM appearances a
+         JOIN points p ON p.point_id = a.point_id
+         JOIN players pl ON pl.player_id = a.player_id
+         WHERE p.point_number = 24 AND a.line = 'offense' AND a.line_changed = 0`,
+      )
+      .all() as Array<{ player_id: number; name_key: string }>;
+    expect(peers).toHaveLength(6);
+
+    let excluded = 0;
+    for (const peer of peers) {
+      const shared = sharedPointIds(geoffId, peer.player_id);
+      expect(rawSameLinePointIds(geoffId, peer.player_id)).toContain(point24);
+      const row = pairRow("geoff solomon", peer.name_key);
+      if (shared.length === 0) {
+        // Point 24 is the only point they ever shared a line on, so without
+        // the exclusion each of these would be a one-point teammate pair
+        // built solely from the outside-actor row.
+        expect(rawSameLinePointIds(geoffId, peer.player_id)).toEqual([point24]);
+        expect(row).toBeUndefined();
+        excluded += 1;
+      } else {
+        expect(row).toBeDefined();
+        expect(row!.points_together).toBe(shared.length);
+      }
+    }
+    expect(excluded).toBe(3); // non-vacuous: three of the six really are excluded
+
+    // The exclusion is specific to the outside-actor row: Geoff still forms
+    // teammate pairs on his ordinary line points.
+    const ericId = idOf("eric moore");
+    expect(sharedPointIds(geoffId, ericId)).toHaveLength(23);
+    expect(teammateRowCount(geoffId, ericId)).toBe(1);
+    expect(pairRow("eric moore", "geoff solomon")!.points_together).toBe(23);
+  });
 });
 
 describe("opponent_effects view", () => {
@@ -449,20 +495,37 @@ describe("opponent_effects view", () => {
   it("computes affected_delta as total credit over weighted points", () => {
     const rows = db.prepare("SELECT * FROM opponent_effects").all() as OpponentRow[];
     expect(rows.length).toBeGreaterThan(0);
-    let guarded = 0;
     for (const row of rows) {
       if (row.weighted_points === 0) {
         // A pair whose opponent never touched the disc on any shared point:
         // no weight, no credit, and a guarded zero rather than a division by
-        // zero. The fixture really contains such pairs.
-        guarded += 1;
+        // zero.
         expect(row.affected_delta).toBe(0);
         expect(row.total_credit).toBe(0);
       } else {
         expect(row.affected_delta).toBe(row.total_credit / row.weighted_points);
       }
     }
-    expect(guarded).toBeGreaterThan(0);
+
+    // The fixture holds no naturally zero-weight pair, so build one:
+    // zeroing every weight of one directed pair leaves both terms of the
+    // ratio at 0, which is the case the guard exists for.
+    const pair = db
+      .prepare(
+        `SELECT player_id, opponent_id FROM opponent_weight
+         GROUP BY player_id, opponent_id ORDER BY COUNT(*) DESC, player_id LIMIT 1`,
+      )
+      .get() as { player_id: number; opponent_id: number };
+    db.prepare("UPDATE opponent_weight SET weight = 0 WHERE player_id = ? AND opponent_id = ?").run(
+      pair.player_id,
+      pair.opponent_id,
+    );
+    const built = db
+      .prepare("SELECT * FROM opponent_effects WHERE player_id = ? AND opponent_id = ?")
+      .get(pair.player_id, pair.opponent_id) as OpponentRow;
+    expect(built.weighted_points).toBe(0);
+    expect(built.total_credit).toBe(0);
+    expect(built.affected_delta).toBe(0);
   });
 
   it("matches a full recomputation from raw facts", () => {
@@ -649,59 +712,48 @@ describe("opponent_effects view", () => {
     expect(opponentRowById(idOf("justin ye"), idOf("gabe senecal"))).toBeDefined();
   });
 
-  it("forms no teammate pairs for an outside-line actor's point", () => {
-    // Geoff Solomon is the fixture's only event actor outside both recorded
-    // lines: at point 24 he gets a defence appearance with line_changed = 1.
-    // The six defence players recorded on that point are his only same-line
-    // co-appearances with him, so without the exclusion every one of those
-    // pairs would be a one-point teammate pair built solely from an
-    // outside-actor row.
+  it("forms opponent pairs for an outside-line actor's point", () => {
+    // The same point 24: Geoff's resolved team is the point's offence team,
+    // so he is stored on the offense line and the opponent view counts him
+    // against all six defence players, in both directions.
     const geoffId = idOf("geoff solomon");
     const point24 = pointIdFor(1000, 24);
-    const peers = db
+    const defenseAt24 = db
       .prepare(
         `SELECT a.player_id AS player_id FROM appearances a
          JOIN points p ON p.point_id = a.point_id
-         WHERE p.point_number = 24 AND a.line = 'defense' AND a.line_changed = 0`,
+         WHERE p.point_number = 24 AND a.line = 'defense'`,
       )
       .all() as Array<{ player_id: number }>;
-    expect(peers).toHaveLength(6);
-    for (const peer of peers) {
-      expect(rawSameLinePointIds(geoffId, peer.player_id)).toEqual([point24]);
-      expect(teammateRowCount(geoffId, peer.player_id)).toBe(0);
+    expect(defenseAt24).toHaveLength(6);
+    for (const opponent of defenseAt24) {
+      expect(opponentRowById(geoffId, opponent.player_id)).toBeDefined();
+      expect(opponentRowById(opponent.player_id, geoffId)).toBeDefined();
+      expect(opponentPoints(geoffId, opponent.player_id).map((p) => p.point_id)).toContain(point24);
+      expect(opponentPoints(opponent.player_id, geoffId).map((p) => p.point_id)).toContain(point24);
     }
 
-    // The exclusion is specific to the outside-actor row: Geoff still forms
-    // teammate pairs on his ordinary line points.
-    const ericId = idOf("eric moore");
-    expect(sharedPointIds(geoffId, ericId)).toHaveLength(23);
-    expect(teammateRowCount(geoffId, ericId)).toBe(1);
-    expect(pairRow("eric moore", "geoff solomon")!.points_together).toBe(23);
-  });
-
-  it("forms opponent pairs for an outside-line actor's point", () => {
-    // The same point 24: Geoff was playing against the offence line, so the
-    // opponent view counts him against all six of them, in both directions.
-    const geoffId = idOf("geoff solomon");
-    const point24 = pointIdFor(1000, 24);
+    // The offence line he joined is his own side at that point: no opponent
+    // weight, in either direction, runs between him and them there.
     const offenseAt24 = db
       .prepare(
         `SELECT a.player_id AS player_id FROM appearances a
          JOIN points p ON p.point_id = a.point_id
-         WHERE p.point_number = 24 AND a.line = 'offense'`,
+         WHERE p.point_number = 24 AND a.line = 'offense' AND a.line_changed = 0`,
       )
       .all() as Array<{ player_id: number }>;
     expect(offenseAt24).toHaveLength(6);
-    for (const opponent of offenseAt24) {
-      expect(opponentRowById(geoffId, opponent.player_id)).toBeDefined();
-      expect(opponentRowById(opponent.player_id, geoffId)).toBeDefined();
+    for (const peer of offenseAt24) {
+      expect(opponentPoints(geoffId, peer.player_id).map((p) => p.point_id)).not.toContain(point24);
+      expect(opponentPoints(peer.player_id, geoffId).map((p) => p.point_id)).not.toContain(point24);
     }
 
-    // Point 24 is one of the points counted in Geoff's points_against.
-    const jonId = idOf("jon rowe");
-    const faced = opponentPoints(geoffId, jonId).map((p) => p.point_id);
+    // Point 24 is one of the points counted in Geoff's points_against,
+    // against the defence line he faced there.
+    const justinId = idOf("justin ye");
+    const faced = opponentPoints(geoffId, justinId).map((p) => p.point_id);
     expect(faced).toContain(point24);
-    const row = opponentRowById(geoffId, jonId);
+    const row = opponentRowById(geoffId, justinId);
     expect(row).toBeDefined();
     expect(row!.points_against).toBe(faced.length);
   });
