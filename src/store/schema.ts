@@ -114,12 +114,17 @@ CREATE VIEW IF NOT EXISTS opponent_effects AS SELECT NULL AS player_id WHERE 0;
 `;
 
 /**
- * Apply the schema to `db` and record the schema version. Safe to run
+ * Apply the schema to `db` and record the schema version, atomically: the
+ * DDL and the version upsert share one transaction, so a mid-exec failure
+ * cannot leave partial DDL applied with no version row. Safe to run
  * repeatedly: the DDL uses `IF NOT EXISTS` and the version row upserts.
  */
 export function migrate(db: Db): void {
-  db.exec(SCHEMA_SQL);
-  db.prepare(
-    "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(String(SCHEMA_VERSION));
+  const apply = db.transaction(() => {
+    db.exec(SCHEMA_SQL);
+    db.prepare(
+      "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(String(SCHEMA_VERSION));
+  });
+  apply();
 }
