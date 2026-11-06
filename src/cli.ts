@@ -200,11 +200,22 @@ function validateFlags(command: string, parsed: ParsedArgs): void {
   }
 }
 
-/** One cell as the tables show it: null and undefined are empty, floats carry two decimals. */
-function formatCell(value: string | number | null | undefined): string {
+/**
+ * Columns printed at six decimals instead of two: a denominator the
+ * reader divides by, where two decimals would not reproduce the ratio
+ * printed beside it. Everything else rounds for readability; the CSV
+ * export carries the exact figures.
+ */
+const HIGH_PRECISION_COLUMNS = new Set(["weighted_points"]);
+
+/**
+ * One cell as the tables show it: null and undefined are empty, floats
+ * carry two decimals unless the column is a denominator.
+ */
+function formatCell(value: string | number | null | undefined, precision = 2): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") {
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    return Number.isInteger(value) ? String(value) : value.toFixed(precision);
   }
   return value;
 }
@@ -228,7 +239,11 @@ function formatDetail(value: string | number | null): string {
  * then trimmed so lines end at the value rather than at padding.
  */
 function renderTable(columns: string[], rows: Row[]): string[] {
-  const cells = rows.map((row) => columns.map((column) => formatCell(row[column])));
+  const cells = rows.map((row) =>
+    columns.map((column) =>
+      formatCell(row[column], HIGH_PRECISION_COLUMNS.has(column) ? 6 : undefined),
+    ),
+  );
   const widths = columns.map((column, index) =>
     Math.max(column.length, ...cells.map((cellsRow) => cellsRow[index]!.length)),
   );

@@ -282,7 +282,22 @@ describe("cli", () => {
     const headerCells = header.split(/\s{2,}/);
     expect(headerCells).toHaveLength(16);
     for (const line of rows) {
-      expect(line.trim().split(/\s{2,}/)).toHaveLength(headerCells.length);
+      const cells = line.trim().split(/\s{2,}/);
+      expect(cells).toHaveLength(headerCells.length);
+      const totalCredit = Number(cells[2]);
+      const weightedPoints = Number(cells[3]);
+      const affectedDelta = Number(cells[4]);
+      const ruleSum = cells.slice(5).reduce((sum, cell) => sum + Number(cell), 0);
+      // The row reconciles from what is printed: the denominator divides
+      // into the credit, and the eleven rules sum to the headline. The
+      // tolerances cover the table's own rounding of each printed cell; a
+      // wrong unit would be off by more than an order of magnitude.
+      if (weightedPoints > 0) {
+        expect(Math.abs(totalCredit / weightedPoints - affectedDelta)).toBeLessThan(
+          (0.01 + Math.abs(affectedDelta) * 1e-4) / weightedPoints,
+        );
+      }
+      expect(Math.abs(ruleSum - affectedDelta)).toBeLessThan(0.1);
     }
   });
 
