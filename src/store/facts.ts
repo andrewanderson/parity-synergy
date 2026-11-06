@@ -17,8 +17,8 @@ type LedgerPlayer = FullGamePayload["salaryLedger"]["points"][number]["playerSal
  * delete cascades to appearances, metrics, rules, components, and weights
  * because `openDb` enables foreign keys on the connection.
  *
- * The MCP owns every derivation: canonicalisation, the salary ledger, the
- * per-point stats, player normalisation, and team resolution are all read
+ * The MCP owns every derivation: canonicalization, the salary ledger, the
+ * per-point stats, player normalization, and team resolution are all read
  * from `payload` and `pointStats`, never recomputed here. The recorded line
  * rows define relationships: a line player's opponents are the opposing
  * line, and an event actor recorded on neither line is assigned the
@@ -26,7 +26,8 @@ type LedgerPlayer = FullGamePayload["salaryLedger"]["points"][number]["playerSal
  * playing against.
  *
  * Returns the distinct player ids that appeared in the game, in first-seen
- * order, so the caller can recompute exactly their baselines.
+ * order, plus any player whose facts this write removed, so the caller can
+ * rebuild exactly the baselines the write could have invalidated.
  */
 export function writeGameFacts(
   db: Db,
@@ -71,6 +72,13 @@ export function writeGameFacts(
   );
   const deletePoints = db.prepare("DELETE FROM points WHERE game_id = ?");
   const deleteGame = db.prepare("DELETE FROM games WHERE game_id = ?");
+  const selectGamePlayers = db.prepare(
+    `SELECT DISTINCT a.player_id AS player_id
+     FROM appearances a
+     JOIN points p ON p.point_id = a.point_id
+     WHERE p.game_id = ?
+     ORDER BY a.player_id`,
+  );
 
   // Division comes from the stats lines and exists only when the league's
   // teams source was available: absent is unknown, never a guess. It is
@@ -110,7 +118,12 @@ export function writeGameFacts(
 
   const write = db.transaction((): number[] => {
     // 1. Replace any previous write of this game; deleting points cascades
-    // to every child fact table.
+    // to every child fact table. Collect the players whose facts this write
+    // is about to remove first, so a player who drops out of a re-ingested
+    // game still reaches the baseline rebuild.
+    const removed = selectGamePlayers.all(payload.game.id) as Array<{
+      player_id: number;
+    }>;
     deletePoints.run(payload.game.id);
     deleteGame.run(payload.game.id);
 
@@ -302,6 +315,11 @@ export function writeGameFacts(
 
     // 12. The ingest log, inside the same transaction as the facts.
     insertLog.run(payload.game.id, new Date().toISOString());
+
+    // Removed players are appended after the written players: a player who
+    // appears in the new version keeps its first-seen position, so a
+    // byte-identical re-ingest returns the same list in the same order.
+    for (const row of removed) touched.add(row.player_id);
 
     return [...touched];
   });

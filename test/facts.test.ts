@@ -93,15 +93,31 @@ function syntheticGame(
 }
 
 /**
- * One point where "Quinn Fielder" is recorded on both rows and "Zero Player"
- * is a line player who never touches an event, so their salary is 0.
+ * A full-size point where "Quinn Fielder" is recorded on both rows and
+ * "Zero Player" is a line player who never touches an event, so their
+ * salary is 0. The defence side touches the disc, so Quinn's opponent
+ * weights are involvement shares rather than an equal split.
  */
 const bothRowsRaw = syntheticGame({
   id: 999001,
   points: [
     {
-      offensePlayers: ["Zero Player", "Quinn Fielder"],
-      defensePlayers: ["Active Player", "Quinn Fielder"],
+      offensePlayers: [
+        "Zero Player",
+        "Quinn Fielder",
+        "Offense One",
+        "Offense Two",
+        "Offense Three",
+        "Offense Four",
+      ],
+      defensePlayers: [
+        "Active Player",
+        "Quinn Fielder",
+        "Defense One",
+        "Defense Two",
+        "Defense Three",
+        "Defense Four",
+      ],
       events: [
         {
           type: "DEFENSE",
@@ -114,6 +130,18 @@ const bothRowsRaw = syntheticGame({
           firstActor: "Quinn Fielder",
           secondActor: "Active Player",
           timestamp: "3/15/2026, 10:00:05 AM",
+        },
+        {
+          type: "PASS",
+          firstActor: "Defense One",
+          secondActor: "Defense Two",
+          timestamp: "3/15/2026, 10:00:10 AM",
+        },
+        {
+          type: "THROWAWAY",
+          firstActor: "Defense Three",
+          secondActor: null,
+          timestamp: "3/15/2026, 10:00:15 AM",
         },
       ],
     },
@@ -272,7 +300,7 @@ function writeFixture(): number[] {
 
 describe("writeGameFacts", () => {
   it("writes one appearance row per player per point", () => {
-    writeFixture();
+    recomputeBaselines(db, writeFixture());
 
     // 45 points x 12 line players, plus the one event actor recorded on
     // neither line (geoff solomon in point 24): 541 distinct (point, player)
@@ -312,6 +340,16 @@ describe("writeGameFacts", () => {
     expect(rules.n).toBe(895);
     expect(components.n).toBe(1048);
     expect(weights.n).toBe(3252);
+
+    // The materialised table: 22 players x 11 metrics (ten stats + salary)
+    // plus 192 salary:<RULE> rows across the eleven rules = 434 rows. The
+    // ingest log records this single write.
+    const baselines = db
+      .prepare("SELECT COUNT(*) AS n FROM player_baselines")
+      .get() as { n: number };
+    const log = db.prepare("SELECT COUNT(*) AS n FROM ingest_log").get() as { n: number };
+    expect(baselines.n).toBe(434);
+    expect(log.n).toBe(1);
   });
 
   it("writes a player who appears on both lines of a point exactly once", () => {
@@ -327,6 +365,40 @@ describe("writeGameFacts", () => {
       .all(pointId, quinnId) as Array<{ line: string }>;
     expect(rows).toHaveLength(1);
     expect(rows[0]?.line).toBe("offense");
+  });
+
+  it("weights a player on both lines only against the other side", () => {
+    writeGameFacts(db, bothRows.full, bothRows.pointStats);
+    const quinnId = playerIdFor(db, "quinn fielder");
+    expect(quinnId).toBeDefined();
+    const pointId = pointIdFor(db, 999001, 1);
+
+    // Quinn's single appearance is on the offense line, so his opponents
+    // are exactly the five defence-only players: the side his appearance
+    // line opposes, without himself.
+    const defenseIds = appearanceIds(db, pointId, "defense");
+    expect(defenseIds).toHaveLength(5);
+    expect(opponentIds(db, pointId, quinnId as number)).toEqual(defenseIds);
+
+    // His weights sum to 1 across that side.
+    const sum = db
+      .prepare(
+        "SELECT SUM(weight) AS w FROM opponent_weight WHERE point_id = ? AND player_id = ?",
+      )
+      .get(pointId, quinnId) as { w: number };
+    expect(sum.w).toBeCloseTo(1, 9);
+
+    // No offense player lists Quinn as an opponent: he is on their own
+    // side, while the defence players, across from him, do list him.
+    const offenseIds = appearanceIds(db, pointId, "offense");
+    const offenseOnly = offenseIds.filter((id) => id !== quinnId);
+    expect(offenseOnly).toHaveLength(5);
+    for (const playerId of offenseOnly) {
+      expect(opponentIds(db, pointId, playerId)).not.toContain(quinnId);
+    }
+    for (const playerId of defenseIds) {
+      expect(opponentIds(db, pointId, playerId)).toContain(quinnId);
+    }
   });
 
   it("gives a line player with no events an appearance row with zero salary", () => {
@@ -662,6 +734,76 @@ describe("recomputeBaselines", () => {
     expect(baselines.length).toBeGreaterThan(0);
     for (const row of baselines) {
       expect(row.points).toBe(1);
+    }
+  });
+
+  it("removes the baselines of a player the re-ingested game no longer contains", () => {
+    const events = [
+      {
+        type: "PASS",
+        firstActor: "Staying Player",
+        secondActor: "Opponent One",
+        timestamp: "3/15/2026, 1:00:00 PM",
+      },
+      {
+        type: "POINT",
+        firstActor: "Opponent One",
+        secondActor: null,
+        timestamp: "3/15/2026, 1:00:10 PM",
+      },
+    ] as const;
+    const first = buildGame(
+      syntheticGame({
+        id: 999010,
+        points: [
+          {
+            offensePlayers: ["Staying Player", "Dropping Player"],
+            defensePlayers: ["Opponent One", "Opponent Two"],
+            events: [...events],
+          },
+        ],
+      }),
+    );
+    recomputeBaselines(db, writeGameFacts(db, first.full, first.pointStats));
+
+    const droppingId = playerIdFor(db, "dropping player");
+    expect(droppingId).toBeDefined();
+    const before = db
+      .prepare("SELECT COUNT(*) AS n FROM player_baselines WHERE player_id = ?")
+      .get(droppingId) as { n: number };
+    expect(before.n).toBeGreaterThan(0);
+
+    // Re-ingest the same game without the dropping player. The returned ids
+    // must carry them, or their facts cascade away while their stale
+    // baselines survive.
+    const second = buildGame(
+      syntheticGame({
+        id: 999010,
+        points: [
+          {
+            offensePlayers: ["Staying Player"],
+            defensePlayers: ["Opponent One", "Opponent Two"],
+            events: [...events],
+          },
+        ],
+      }),
+    );
+    const ids = writeGameFacts(db, second.full, second.pointStats);
+    expect(ids).toContain(droppingId);
+    recomputeBaselines(db, ids);
+
+    const after = db
+      .prepare("SELECT COUNT(*) AS n FROM player_baselines WHERE player_id = ?")
+      .get(droppingId) as { n: number };
+    expect(after.n).toBe(0);
+
+    // The players still present keep exact baselines.
+    const rows = db
+      .prepare("SELECT points, total, mean FROM player_baselines")
+      .all() as Array<{ points: number; total: number; mean: number }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.mean).toBe(row.total / row.points);
     }
   });
 
