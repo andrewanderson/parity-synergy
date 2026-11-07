@@ -4,3 +4,6 @@ dist/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Local superpowers working docs (specs, plans, handoffs). Not published.
+docs/superpowers/
