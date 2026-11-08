@@ -56,7 +56,9 @@ describe("resolveAndRateTeams", () => {
 
   it("compares against the previous report when there is one", async () => {
     // The history table holds the report's memory of the season, so the
-    // rows are read before the test and written back afterwards.
+    // rows are read before the test and written back afterwards, with
+    // the measure they were recorded under: a row written before the
+    // table gained that column is a hold-and-break rating.
     const writable = new Database("parity-synergy.db");
     const saved = writable.prepare("SELECT * FROM synergy_history").all() as Record<string, unknown>[];
     writable.prepare("DELETE FROM synergy_history").run();
@@ -68,9 +70,9 @@ describe("resolveAndRateTeams", () => {
       db.prepare(
         `INSERT INTO synergy_history
            (league_id, team_name, entry_type, taken_at, rating, pair_count,
-            shared_point_count, shared_game_count, roster_signature, game_high_water)
+            shared_point_count, shared_game_count, roster_signature, game_high_water, measure)
          VALUES (25, 'Set Phasers to Huck (Nick)', 'ingest', '2026-11-01T00:00:00.000Z',
-                 60, 24, 1504, 54, '1,2,3', 1000)`,
+                 60, 24, 1504, 54, '1,2,3', 1000, 'salary')`,
       ).run();
       db.close();
 
@@ -100,8 +102,8 @@ describe("resolveAndRateTeams", () => {
         const insert = restore.prepare(
           `INSERT INTO synergy_history
              (league_id, team_name, entry_type, taken_at, rating, pair_count,
-              shared_point_count, shared_game_count, roster_signature, game_high_water)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              shared_point_count, shared_game_count, roster_signature, game_high_water, measure)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const putBack = restore.transaction((rows: Record<string, unknown>[]) => {
           for (const row of rows) {
@@ -116,6 +118,7 @@ describe("resolveAndRateTeams", () => {
               row.shared_game_count,
               row.roster_signature,
               row.game_high_water,
+              row.measure ?? "hold_break",
             );
           }
         });

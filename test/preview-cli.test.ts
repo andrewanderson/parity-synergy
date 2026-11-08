@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { buildPreview } from "../src/preview/index.js";
+import { openHistoryTable } from "../src/preview/history-table.js";
 import { openExistingDb } from "../src/store/db.js";
 
 describe("buildPreview", () => {
@@ -11,6 +12,11 @@ describe("buildPreview", () => {
    * The history table holds the report's memory of the season, so a
    * test that writes to it must put back what it found. The rows are
    * read before the test and written back afterwards.
+   *
+   * The measure column is restored with the row: a row written before the
+   * table gained that column is a hold-and-break rating, and labelling it
+   * with the current measure would let the report compare a whole-salary
+   * rating against it.
    */
   async function withRestoredHistory(fn: (db: Database.Database) => Promise<void>): Promise<void> {
     const db = openExistingDb("parity-synergy.db");
@@ -21,11 +27,12 @@ describe("buildPreview", () => {
     } finally {
       db.prepare("DELETE FROM synergy_history").run();
       if (saved.length > 0) {
+        openHistoryTable(db);
         const insert = db.prepare(
           `INSERT INTO synergy_history
              (league_id, team_name, entry_type, taken_at, rating, pair_count,
-              shared_point_count, shared_game_count, roster_signature, game_high_water)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              shared_point_count, shared_game_count, roster_signature, game_high_water, measure)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const restore = db.transaction((rows: Record<string, unknown>[]) => {
           for (const row of rows) {
@@ -40,6 +47,7 @@ describe("buildPreview", () => {
               row.shared_game_count,
               row.roster_signature,
               row.game_high_water,
+              row.measure ?? "hold_break",
             );
           }
         });
@@ -143,9 +151,9 @@ describe("buildPreview", () => {
         db.prepare(
           `INSERT INTO synergy_history
              (league_id, team_name, entry_type, taken_at, rating, pair_count,
-              shared_point_count, shared_game_count, roster_signature, game_high_water)
+              shared_point_count, shared_game_count, roster_signature, game_high_water, measure)
            SELECT league_id, team_name, 'ingest', '2026-11-01T00:00:00.000Z', rating - 5,
-                  pair_count, shared_point_count, shared_game_count, roster_signature, 1000
+                  pair_count, shared_point_count, shared_game_count, roster_signature, 1000, measure
            FROM synergy_history WHERE league_id = 25`,
         ).run();
         await buildPreview({

@@ -365,9 +365,8 @@ function methodSection(data: PageData): string {
         <p><b>The rating</b> measures how much a roster's players earn per point when they are on a
         line together, compared with what the same players earn per point across all their points. It
         counts a player's whole salary, so it moves with everything they earn: the goals and assists they
-        make, the passes they complete, and the bonuses every player on a line shares. A player who
-        does better in every category when a particular teammate is on their line pushes that
-        teammate's rating up.</p>
+        make, the passes they complete, and the bonuses every player on a line shares. A player who earns
+        more per point with a particular teammate than alone pushes their own rating up.</p>
         <p>Each player's excess with each teammate is averaged over their teammates, weighted by how
         much history each pairing has. The team rating is the mean over its players, so a player counts
         once no matter how many teammates they have, and thin pairings count for less. A pair needs at

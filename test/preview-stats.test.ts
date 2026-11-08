@@ -8,7 +8,9 @@ describe("computeRatingStats", () => {
     const stats = computeRatingStats(db as never);
     // The rating and a team's point differential are weakly related:
     // -0.131 Pearson over 41 team-leagues, so about 1.7% of the variance.
-    expect(Math.abs(stats.correlationWithPointDiff)).toBeLessThan(0.15);
+    // The figure is pinned, sign and all, because the page's own copy
+    // says the correlation is negative.
+    expect(stats.correlationWithPointDiff).toBeCloseTo(-0.131, 2);
     // The rating is not a sample-size proxy.
     expect(stats.correlationWithSharedPoints).toBeCloseTo(-0.082, 2);
     expect(stats.medianGameMargin).toBe(4);

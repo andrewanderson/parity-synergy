@@ -118,6 +118,95 @@ describe("previousEntry", () => {
   });
 });
 
+describe("a history table that predates the measure column", () => {
+  it("is migrated, and its rows are labelled with the old measure", () => {
+    const db = new Database(":memory:");
+    // The shape the table had before the rating moved from hold-and-break
+    // to whole salary.
+    db.exec(`CREATE TABLE synergy_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      league_id INTEGER NOT NULL,
+      team_name TEXT NOT NULL,
+      entry_type TEXT NOT NULL,
+      taken_at TEXT NOT NULL,
+      rating REAL NOT NULL,
+      pair_count INTEGER NOT NULL,
+      shared_point_count INTEGER NOT NULL,
+      shared_game_count INTEGER NOT NULL,
+      roster_signature TEXT NOT NULL,
+      game_high_water INTEGER NOT NULL,
+      UNIQUE (league_id, team_name, game_high_water)
+    )`);
+    db.prepare(
+      `INSERT INTO synergy_history
+         (league_id, team_name, entry_type, taken_at, rating, pair_count,
+          shared_point_count, shared_game_count, roster_signature, game_high_water)
+       VALUES (25, 'Set Phasers to Huck (Nick)', 'season_opening', '2026-11-08T00:00:00.000Z',
+               65.42, 24, 1504, 54, 'abc123', 1017)`,
+    ).run();
+
+    // The read helpers must not fail on the old shape, and its rows must
+    // not be read as if they were whole-salary ratings.
+    expect(latestHistory(db, 25).size).toBe(0);
+    expect(previousEntry(db, 25, "Set Phasers to Huck (Nick)", 1017)).toBeUndefined();
+
+    openHistoryTable(db);
+    const columns = db.prepare("PRAGMA table_info(synergy_history)").all() as { name: string }[];
+    expect(columns.some((column) => column.name === "measure")).toBe(true);
+    const rows = db.prepare("SELECT measure FROM synergy_history").all() as { measure: string }[];
+    expect(rows[0]!.measure).toBe("hold_break");
+    // The old rows are still there, and still invisible to the report.
+    expect(rows).toHaveLength(1);
+    expect(latestHistory(db, 25).size).toBe(0);
+    // The table's unique key includes the measure, so a rating under the
+    // old measure cannot block one under the current measure.
+    appendHistory(db, [entry]);
+    expect(
+      db.prepare("SELECT COUNT(*) c FROM synergy_history WHERE league_id = 25").get(),
+    ).toEqual({ c: 2 });
+    db.close();
+  });
+});
+
+describe("entries recorded under another measure", () => {
+  it("ignores them when reading the history", () => {
+    const db = openStore();
+    db.prepare(
+      `INSERT INTO synergy_history
+         (league_id, team_name, entry_type, taken_at, rating, pair_count,
+          shared_point_count, shared_game_count, roster_signature, game_high_water, measure)
+       VALUES (25, 'Set Phasers to Huck (Nick)', 'ingest', '2026-11-01T00:00:00.000Z',
+               65.42, 24, 1504, 54, 'abc123', 1000, 'hold_break')`,
+    ).run();
+    // A hold-and-break rating cannot be compared with a whole-salary one.
+    expect(previousEntry(db, 25, "Set Phasers to Huck (Nick)", 1017)).toBeUndefined();
+    expect(latestHistory(db, 25).size).toBe(0);
+    db.close();
+  });
+
+  it("records the new measure beside the old one for the same games", () => {
+    const db = openStore();
+    db.prepare(
+      `INSERT INTO synergy_history
+         (league_id, team_name, entry_type, taken_at, rating, pair_count,
+          shared_point_count, shared_game_count, roster_signature, game_high_water, measure)
+       VALUES (25, 'Set Phasers to Huck (Nick)', 'season_opening', '2026-11-08T00:00:00.000Z',
+               65.42, 24, 1504, 54, 'abc123', 1017, 'hold_break')`,
+    ).run();
+    appendHistory(db, [entry]);
+    const rows = db
+      .prepare("SELECT measure, rating FROM synergy_history ORDER BY measure")
+      .all() as { measure: string; rating: number }[];
+    // The old rating is left alone: it cannot be compared with the new
+    // one, and the report reads only the current measure.
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.measure)).toEqual(["hold_break", "salary"]);
+    // The report sees the current measure's figure.
+    expect(previousEntry(db, 25, "Set Phasers to Huck (Nick)", 1018)?.rating).toBeCloseTo(65.42, 5);
+    db.close();
+  });
+});
+
 describe("rosterSignature", () => {
   it("is the same for a roster however its players are ordered", () => {
     expect(rosterSignature([3, 1, 2])).toBe(rosterSignature([1, 2, 3]));

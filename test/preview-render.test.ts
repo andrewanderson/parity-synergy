@@ -84,6 +84,15 @@ describe("renderPage", () => {
     expect(worst).toContain("-$3,172");
   });
 
+  it("says that a player lifts their own rating, not their teammate's", () => {
+    const html = renderPage(data);
+    // A player's excess with a teammate rises when that teammate is on
+    // their line, so the player's own rating rises. The teammate's rating
+    // is a different number about a different person.
+    expect(html).toMatch(/pushes their own\s+rating up/);
+    expect(html).not.toMatch(/pushes that teammate's\s+rating up/);
+  });
+
   it("describes the measure as whole salary, not hold and break", () => {
     const html = renderPage(data);
     expect(html).not.toMatch(/hold-and-break/i);
