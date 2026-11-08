@@ -95,6 +95,11 @@ p { margin: 8px 0; }
 .roster h4 { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .card-chemistry { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .card-chemistry h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.chem-team { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+.chem-team h3 { margin: 0 0 2px; }
+.chem-players { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+@media (min-width: 900px) { .chem-players { grid-template-columns: 1fr 1fr; } }
+.chem-player h4 { margin: 0 0 2px; font-size: 13px; }
 .chart { overflow-x: auto; }
 /* The card charts scale to their container: a fixed-width SVG would
    overflow the card on a narrow screen. */
@@ -163,10 +168,6 @@ function teamCard(section: TeamSection, data: PageData): string {
     )
     .join("");
 
-  const chemistry = section.chemistry
-    .map((player) => playerChemistrySvg({ playerName: player.playerName, teammates: player.teammates }))
-    .join("");
-
   // A roster with no shared history has no rating to report. Showing a
   // zero would read as a mid-pack result rather than as missing data.
   const ratingBlock = hasRating
@@ -222,10 +223,6 @@ function teamCard(section: TeamSection, data: PageData): string {
             : '<span class="small muted">None</span>'
         }</div>
       </div>
-      <div class="card-chemistry">
-        <h4>Chemistry with each teammate</h4>
-        <div class="chart">${chemistry}</div>
-      </div>
     </article>`;
 }
 
@@ -278,9 +275,7 @@ function chemistrySection(data: PageData): string {
       const rows = section.chemistry
         .map(
           (player) => `
-          <div class="card">
-            <h3>${escapeXml(section.team.name)}</h3>
-            <p class="small muted">${escapeXml(player.playerName)}: excess per shared point with each teammate</p>
+          <div class="chem-player">
             <div class="chart">${playerChemistrySvg({
               playerName: player.playerName,
               teammates: player.teammates,
@@ -288,7 +283,12 @@ function chemistrySection(data: PageData): string {
           </div>`,
         )
         .join("");
-      return rows;
+      return `
+        <div class="chem-team">
+          <h3>${escapeXml(section.team.name)}</h3>
+          <p class="small muted">each player's excess per shared point with each teammate</p>
+          <div class="chem-players">${rows}</div>
+        </div>`;
     })
     .join("");
   return `
@@ -298,7 +298,7 @@ function chemistrySection(data: PageData): string {
       the chemistry and who is dragged down by it.</p>
       <p class="legend">Synergy: hold-and-break excess per shared point. Zero means the player earned
       what they would have earned alone.</p>
-      <div class="cards">${blocks}</div>
+      ${blocks}
     </section>`;
 }
 
