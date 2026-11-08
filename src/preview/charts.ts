@@ -258,7 +258,7 @@ export function playerChemistrySvg(input: {
   parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
   parts.push(`<text x="0" y="16" font-size="13" font-weight="600">${escapeXml(input.playerName)}</text>`);
   parts.push(
-    `<text x="0" y="30" font-size="10" fill="#555">synergy, hold-and-break excess per shared point, shared points in brackets</text>`,
+    `<text x="0" y="30" font-size="10" fill="#555">synergy, salary excess per shared point, shared points in brackets</text>`,
   );
 
   if (input.teammates.length === 0) {

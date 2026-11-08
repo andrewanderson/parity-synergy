@@ -346,7 +346,7 @@ function chemistrySection(data: PageData): string {
       <h2>Roster synergy ratings</h2>
       <p class="lede muted">Each player's own excess with each teammate, so you can see who carries
       the chemistry and who is dragged down by it.</p>
-      <p class="legend">Synergy: hold-and-break excess per shared point. Zero means the player earned
+      <p class="legend">Synergy: salary excess per shared point. Zero means the player earned
       what they would have earned alone. Green is above zero, red is below.</p>
       ${blocks}
     </section>`;
@@ -362,16 +362,18 @@ function methodSection(data: PageData): string {
     <section>
       <h2>How this was made</h2>
       <div class="note">
-        <p><b>The rating</b> measures how much a roster's players earn from line-shared bonuses when
-        they are on a line together, compared with what the same players earn on their own. Hold and
-        break are the salary bonuses every player on a line receives when that line scores or forces a
-        turnover, so they are the part of salary that depends on who else is on your line.</p>
+        <p><b>The rating</b> measures how much a roster's players earn per point when they are on a
+        line together, compared with what the same players earn per point across all their points. It
+        counts a player's whole salary, so it moves with everything they earn: the goals and assists they
+        make, the passes they complete, and the bonuses every player on a line shares. A player who
+        does better in every category when a particular teammate is on their line pushes that
+        teammate's rating up.</p>
         <p>Each player's excess with each teammate is averaged over their teammates, weighted by how
         much history each pairing has. The team rating is the mean over its players, so a player counts
         once no matter how many teammates they have, and thin pairings count for less. A pair needs at
         least 5 shared points to count.</p>
-        <p>A positive rating means the roster earns more from line-shared bonuses with each other than
-        the same players would alone. A rating near zero means the players neither lift each other nor
+        <p>A positive rating means the roster earns more per point with each other than the same
+        players would alone. A rating near zero means the players neither lift each other nor
         drag each other down, which is a real result and not a lack of one: a roster can have a lot of
         shared history and still be flat.</p>
         <p><b>This is a live report.</b> Each rating covers every game in our store, so it moves as the
@@ -396,8 +398,8 @@ function methodSection(data: PageData): string {
         cover. We report that gap rather than guessing at a player's background.</li>
         <li>Pairings and shared games are sample sizes. A rating on few pairings rests on less
         evidence than a rating on many, and every card says which it is.</li>
-        <li>Goals and assists are excluded. They measure who is better individually, not who plays
-        well together.</li>
+        <li>A rating is not a record of who has played well. It says how much a group of people
+        earn per point when they are on a line together, over what the same people earn alone.</li>
       </ul>
     </section>`;
 }

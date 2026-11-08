@@ -84,6 +84,13 @@ describe("renderPage", () => {
     expect(worst).toContain("-$3,172");
   });
 
+  it("describes the measure as whole salary, not hold and break", () => {
+    const html = renderPage(data);
+    expect(html).not.toMatch(/hold-and-break/i);
+    expect(html).not.toMatch(/hold and break/i);
+    expect(html).toMatch(/salary excess per shared point/i);
+  });
+
   it("does not frame the rating as a prediction of results", () => {
     const html = renderPage(data);
     expect(html).not.toMatch(/predict/i);
