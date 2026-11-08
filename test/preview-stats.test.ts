@@ -6,11 +6,11 @@ describe("computeRatingStats", () => {
   it("measures the properties of the rating that the page publishes", () => {
     const db = new Database("parity-synergy.db", { readonly: true });
     const stats = computeRatingStats(db as never);
-    // The rating and a team's point differential are essentially
-    // uncorrelated.
-    expect(Math.abs(stats.correlationWithPointDiff)).toBeLessThan(0.05);
+    // The rating and a team's point differential are weakly related:
+    // -0.131 Pearson over 41 team-leagues, so about 1.7% of the variance.
+    expect(Math.abs(stats.correlationWithPointDiff)).toBeLessThan(0.15);
     // The rating is not a sample-size proxy.
-    expect(stats.correlationWithSharedPoints).toBeCloseTo(-0.028, 2);
+    expect(stats.correlationWithSharedPoints).toBeCloseTo(-0.082, 2);
     expect(stats.medianGameMargin).toBe(4);
     expect(stats.gamesDecidedByThreeOrFewer).toBe(73);
     expect(stats.gamesInStore).toBe(154);

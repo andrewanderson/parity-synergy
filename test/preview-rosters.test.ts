@@ -33,18 +33,18 @@ describe("resolveAndRateTeams", () => {
     // The store holds leagues 20 to 24 only, so the live rating over all
     // history and the season-opening rating over the pre-season history
     // are the same figures today.
-    expect(byName.get("Set Phasers to Huck (Nick)")!.rating.rating).toBeCloseTo(65.42, 1);
-    expect(byName.get("The Empire Throws Back (Des)")!.rating.rating).toBeCloseTo(26.58, 1);
-    expect(byName.get("The Away Team (Al)")!.rating.rating).toBeCloseTo(21.17, 1);
-    expect(byName.get("Twenty Thousand Hammers to Stay Under the Salary Cap (Gabe)")!.rating.rating).toBeCloseTo(13.3, 1);
-    expect(byName.get("A Handler's Guide to the Galaxy Point (Heath)")!.rating.rating).toBeCloseTo(8.57, 1);
-    expect(byName.get("Disc Side of the Force (Noah)")!.rating.rating).toBeCloseTo(3.27, 1);
-    expect(byName.get("Hold the Force, Luke (Cath)")!.rating.rating).toBeCloseTo(1.19, 1);
-    expect(byName.get("Huck to the Future (Deanna)")!.rating.rating).toBeCloseTo(-46.55, 1);
+    expect(byName.get("The Empire Throws Back (Des)")!.rating.rating).toBeCloseTo(502.63, 1);
+    expect(byName.get("Disc Side of the Force (Noah)")!.rating.rating).toBeCloseTo(64.16, 1);
+    expect(byName.get("Hold the Force, Luke (Cath)")!.rating.rating).toBeCloseTo(51.39, 1);
+    expect(byName.get("The Away Team (Al)")!.rating.rating).toBeCloseTo(27.11, 1);
+    expect(byName.get("Twenty Thousand Hammers to Stay Under the Salary Cap (Gabe)")!.rating.rating).toBeCloseTo(-14.49, 1);
+    expect(byName.get("Set Phasers to Huck (Nick)")!.rating.rating).toBeCloseTo(-37.26, 1);
+    expect(byName.get("Huck to the Future (Deanna)")!.rating.rating).toBeCloseTo(-180.54, 1);
+    expect(byName.get("A Handler's Guide to the Galaxy Point (Heath)")!.rating.rating).toBeCloseTo(-273.34, 1);
 
     // Sorted best rating first.
-    expect(teams[0].name).toBe("Set Phasers to Huck (Nick)");
-    expect(teams[7].name).toBe("Huck to the Future (Deanna)");
+    expect(teams[0].name).toBe("The Empire Throws Back (Des)");
+    expect(teams[7].name).toBe("A Handler's Guide to the Galaxy Point (Heath)");
   });
 
   it("counts players with store history separately from players contributing", () => {

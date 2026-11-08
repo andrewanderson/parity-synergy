@@ -33,6 +33,10 @@ const REFERENCE_LEAGUES = [21, 22, 23, 24];
 /**
  * Measure the rating's predictive power and the store's shape.
  *
+ * The rating no longer uses only the line-shared bonuses, so the
+ * correlation with point differential is larger than it was and its sign
+ * is negative. It is still far too weak to predict a result.
+ *
  * The rating's reliability is deliberately not measured here. Splitting a
  * league in half is not a clean repeated measure in a league with trades
  * every two games: a half-season boundary falls mid-rebuild, so the two
