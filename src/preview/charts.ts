@@ -195,7 +195,7 @@ export function playerChemistrySvg(input: {
   const width = 460;
   const labelWidth = 150;
   const barArea = 190;
-  const height = 34 + input.teammates.length * rowHeight;
+  const height = 48 + input.teammates.length * rowHeight;
   const mid = labelWidth + barArea / 2;
   const max = Math.max(
     1,
@@ -206,11 +206,11 @@ export function playerChemistrySvg(input: {
   parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
   parts.push(`<text x="0" y="16" font-size="13" font-weight="600">${escapeXml(input.playerName)}</text>`);
   parts.push(
-    `<text x="${labelWidth + barArea + 12}" y="16" font-size="11" fill="#555">synergy, hold-and-break excess per shared point</text>`,
+    `<text x="0" y="30" font-size="10" fill="#555">synergy, hold-and-break excess per shared point, shared points in brackets</text>`,
   );
 
   input.teammates.forEach((teammate, index) => {
-    const y = 30 + index * rowHeight;
+    const y = 44 + index * rowHeight;
     const excess = Number.isFinite(teammate.excess) ? teammate.excess : 0;
     const barWidthUsed = (Math.abs(excess) / max) * (barArea / 2);
     const fill = divergingColor(excess, max, "synergy");

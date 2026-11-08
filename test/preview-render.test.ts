@@ -109,6 +109,10 @@ describe("renderPage", () => {
     expect(html).not.toMatch(/onmouseover|onclick|onmouseenter/i);
     expect(html).not.toMatch(/<title>/i);
     expect(html).not.toMatch(/aria-describedby/i);
+    // No collapsed content: a screenshot must carry every value, so
+    // nothing may be hidden behind a click.
+    expect(html).not.toMatch(/<details/i);
+    expect(html).not.toMatch(/<summary/i);
   });
 
   it("gives each measure its own legend with its unit", () => {

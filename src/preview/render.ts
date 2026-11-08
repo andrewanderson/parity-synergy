@@ -78,9 +78,9 @@ p { margin: 8px 0; }
   padding: 14px 16px 12px;
   break-inside: avoid;
 }
-.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.rating { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.rating-note { font-size: 12px; color: var(--muted); text-align: right; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.rating { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.rating-note { font-size: 12px; color: var(--muted); text-align: right; max-width: 100%; }
 .stat-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 4px; }
 .stat { font-size: 13px; }
 .stat b { font-variant-numeric: tabular-nums; }
@@ -92,7 +92,15 @@ p { margin: 8px 0; }
 .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-size: 12px; background: var(--wash); }
 .chip.unknown { border-style: dashed; color: var(--muted); }
 .roster h4 { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.card-chemistry { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.card-chemistry h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .chart { overflow-x: auto; }
+/* The card charts scale to their container: a fixed-width SVG would
+   overflow the card on a narrow screen. */
+.chart svg { width: 100%; height: auto; max-width: 100%; }
+/* The heatmap keeps its natural size and scrolls sideways when it does
+   not fit, because scaling it down would make the numbers unreadable. */
+.heatmap-chart svg { width: auto; height: auto; max-width: none; }
 .legend {
   display: inline-block;
   font-size: 12px;
@@ -101,7 +109,8 @@ p { margin: 8px 0; }
 }
 .method-grid { display: grid; grid-template-columns: 1fr; gap: 6px 24px; }
 @media (min-width: 760px) { .method-grid { grid-template-columns: 1fr 1fr; } }
-.method-grid div { font-size: 14px; }
+.method-grid div { font-size: 14px; margin-bottom: 4px; }
+.method-grid + h3 { margin-top: 22px; }
 .note {
   background: var(--paper);
   border: 1px solid var(--line);
@@ -193,10 +202,10 @@ function teamCard(section: TeamSection, data: PageData): string {
             : '<span class="small muted">None</span>'
         }</div>
       </div>
-      <details>
-        <summary class="small muted">Chemistry with each teammate</summary>
+      <div class="card-chemistry">
+        <h4>Chemistry with each teammate</h4>
         <div class="chart">${chemistry}</div>
-      </details>
+      </div>
     </article>`;
 }
 
@@ -229,7 +238,7 @@ function heatmapSection(data: PageData): string {
       <p class="legend">Suppression: salary per weighted point. Negative means the people on the row
       have earned less against the people on the column than against a typical opponent. This scale is
       its own; it is not the synergy scale above.</p>
-      <div class="chart">${svg}</div>
+      <div class="chart heatmap-chart">${svg}</div>
     </section>`;
 }
 

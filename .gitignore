@@ -5,5 +5,8 @@ dist/
 *.db-wal
 *.db-shm
 
+# The generated preview page is a build artifact, not source.
+preview.html
+
 # Local superpowers working docs (specs, plans, handoffs). Not published.
 docs/superpowers/
