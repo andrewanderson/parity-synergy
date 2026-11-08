@@ -53,4 +53,40 @@ describe("resolveAndRateTeams", () => {
     expect(deanna.percentile).toBeCloseTo(3 / 41, 5);
     expect(cath.percentile).toBeCloseTo(19 / 41, 5);
   });
+
+  it("does not let league 25 games change the rating", async () => {
+    // Read-write for this one case: the test inserts its own rows and
+    // deletes them again, so the store is left exactly as it was found.
+    const db = new Database("parity-synergy.db");
+    const source = new ParityApiSource({
+      baseUrl: "https://parity.kevinhughes27.workers.dev",
+    });
+    const before = await resolveAndRateTeams(db as never, source as unknown as DataSource, 25);
+
+    // Simulate a league-25 game by inserting facts, then check the rating is unmoved.
+    const insert = db.transaction(() => {
+      db.prepare(
+        "INSERT INTO games (game_id, league_id, week, date, home_team, away_team, home_score, away_score, salary_rules_version, imported_at) VALUES (2000, 25, 1, NULL, 'Test A', 'Test B', 1, 0, 1, 'now')",
+      ).run();
+      db.prepare(
+        "INSERT INTO points (point_id, game_id, point_number, offense_team, defense_team, duration_sec) VALUES (99999, 2000, 1, 'Test A', 'Test B', 60)",
+      ).run();
+      db.prepare(
+        "INSERT INTO appearances (point_id, player_id, line, is_substitute, touches, line_changed) VALUES (99999, 1, 'offense', 0, 0, 0)",
+      ).run();
+      db.prepare(
+        "INSERT INTO appearances (point_id, player_id, line, is_substitute, touches, line_changed) VALUES (99999, 2, 'offense', 0, 0, 0)",
+      ).run();
+    });
+    insert();
+    try {
+      const after = await resolveAndRateTeams(db as never, source as unknown as DataSource, 25);
+      expect(after.map((t) => t.rating.rating)).toEqual(before.map((t) => t.rating.rating));
+    } finally {
+      db.prepare("DELETE FROM appearances WHERE point_id = 99999").run();
+      db.prepare("DELETE FROM points WHERE point_id = 99999").run();
+      db.prepare("DELETE FROM games WHERE game_id = 2000").run();
+      db.close();
+    }
+  }, 180_000);
 });
