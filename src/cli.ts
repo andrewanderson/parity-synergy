@@ -15,7 +15,7 @@ import { opponentEffects } from "./query/opponents.js";
 import { evaluateTeam } from "./query/teams.js";
 import { buildPreview } from "./preview/index.js";
 import { playerIdFor } from "./store/baselines.js";
-import { openDb, storeFileState, type Db } from "./store/db.js";
+import { openDb, openExistingDb, storeFileState, type Db } from "./store/db.js";
 import { ingestLeagues } from "./store/ingest.js";
 
 /**
@@ -506,6 +506,15 @@ async function cmdPreview(parsed: ParsedArgs, deps: ResolvedDeps, out: string[])
   out.push(`base url: ${baseUrl}`);
   out.push(`league: ${leagueId}`);
   out.push(`wrote ${result.teamCount} teams to ${result.outPath} (${result.byteLength} bytes)`);
+  // The history is the report's memory: it says whether this run
+  // recorded a new figure or just re-rendered.
+  if (result.recorded === "season_opening") {
+    out.push("recorded the season-opening figures for this league");
+  } else if (result.recorded === "ingest") {
+    out.push("recorded new figures; the comparison now reads change since last game");
+  } else {
+    out.push("no new games since the last report; the comparison is unchanged");
+  }
   return 0;
 }
 
@@ -575,6 +584,14 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
     let db: Db;
     if (deps.db !== undefined && dbPath === undefined) {
       db = deps.db;
+    } else if (subcommand === "preview") {
+      // The preview writes its own history table, so it needs a
+      // read-write handle, but it must not run the migration: that
+      // rewrites the game's effect views, and the feature only reads
+      // them.
+      const store = storeFileState(dbPath);
+      db = owned = openExistingDb(dbPath);
+      if (!store.existed) out.push(`created a new empty store at ${store.path}`);
     } else {
       // Recorded before the open: afterwards a file that was not there is
       // indistinguishable from one that always was.

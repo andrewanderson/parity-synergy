@@ -81,6 +81,7 @@ p { margin: 8px 0; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .rating { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .rating-note { font-size: 12px; color: var(--muted); text-align: right; max-width: 100%; }
+.thin-note { font-size: 12px; color: #8a4b12; margin: 2px 0 6px; }
 .stat-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 4px; }
 .stat { font-size: 13px; }
 .stat b { font-variant-numeric: tabular-nums; }
@@ -126,10 +127,9 @@ function header(data: PageData): string {
   return `
     <header>
       <h1>Parity team preview: league ${data.leagueId}</h1>
-      <p class="lede muted">A synergy rating for each roster, built from every game in our store
-      that was played before league ${data.leagueId} began, and the people on these rosters.
-      League ${data.leagueId}'s own games are never included, so this stays a pre-season rating
-      as the season is played.</p>
+      <p class="lede muted">A synergy rating for each roster, built from every game in our store and
+      the people on these rosters. This is a live report: it is regenerated as games are played and as
+      rosters change.</p>
       <p class="small muted">Players are rated on their own store history, not on their current
       roster alone. A team's roster can change from game to game, so every number here is about
       the people on the roster and the history they carry, never about a team as an entity.</p>
@@ -143,6 +143,7 @@ function teamCard(section: TeamSection, data: PageData): string {
   const pairCount = team.rating.pairCount;
   const sharedPoints = team.rating.sharedPointCount;
   const sharedGames = team.sharedGames;
+  const hasRating = team.rating.contributingPlayers > 0;
 
   const best = section.bestPair
     ? `<div class="pair-box"><h4>Best pairing</h4><p><b>${escapeXml(section.bestPair.a)}</b> with
@@ -166,15 +167,30 @@ function teamCard(section: TeamSection, data: PageData): string {
     .map((player) => playerChemistrySvg({ playerName: player.playerName, teammates: player.teammates }))
     .join("");
 
+  // A roster with no shared history has no rating to report. Showing a
+  // zero would read as a mid-pack result rather than as missing data.
+  const ratingBlock = hasRating
+    ? `<div class="rating tabular">${team.rating.rating >= 0 ? "+" : ""}${formatNumber(team.rating.rating)}</div>
+       <div class="rating-note tabular">${changeNote(team)}</div>`
+    : `<div class="rating muted tabular">no rating</div>
+       <div class="rating-note">no shared history on this roster yet</div>`;
+
+  // A rating on very few pairings is thin evidence, and the card has to
+  // say so next to the number rather than in a footnote.
+  const thinNote =
+    hasRating && pairCount < 8
+      ? `<p class="thin-note">Only ${pairCount} pairings behind this number, so it rests on little history.</p>`
+      : "";
+
   return `
     <article class="card">
       <div class="card-head">
         <h3>${escapeXml(team.name)}</h3>
         <div>
-          <div class="rating tabular">${team.rating.rating >= 0 ? "+" : ""}${formatNumber(team.rating.rating)}</div>
-          <div class="rating-note tabular">${Math.round(team.percentile * 100)}th percentile of ${teamLeagueCountLabel(data)} historical team-seasons</div>
+          ${ratingBlock}
         </div>
       </div>
+      ${thinNote}
       <div class="stat-row small">
         <span class="stat tabular"><b>${pairCount}</b> pairings</span>
         <span class="stat tabular"><b>${sharedPoints}</b> shared points</span>
@@ -182,16 +198,20 @@ function teamCard(section: TeamSection, data: PageData): string {
         <span class="stat tabular"><b>${team.storePlayerIds.length}</b> of ${team.rosterNames.length} players in our data</span>
         <span class="stat tabular"><b>${team.rating.contributingPlayers}</b> contributing</span>
       </div>
-      <div class="chart">${ratingBarSvg({
-        label: "Synergy rating",
-        value: team.rating.rating,
-        max: ratingScaleMax(data),
-        percentile: team.percentile,
-        pairCount,
-      })}</div>
+      ${
+        hasRating
+          ? `<div class="chart">${ratingBarSvg({
+              label: "Current synergy",
+              value: team.rating.rating,
+              max: ratingScaleMax(data),
+              note: `${pairCount} pairings, ${sharedGames} shared games`,
+              pairCount,
+            })}</div>`
+          : ""
+      }
       <div class="pair-grid">${best}${worst}</div>
       <div class="roster">
-        <h4>Top earners by baseline salary per point</h4>
+        <h4>Top earners by salary per point</h4>
         <div class="chips">${earners}</div>
         <h4>Roster with history in our data (${returning.length})</h4>
         <div class="chips">${returning.map((name) => `<span class="chip">${escapeXml(name)}</span>`).join("")}</div>
@@ -209,9 +229,18 @@ function teamCard(section: TeamSection, data: PageData): string {
     </article>`;
 }
 
-/** The historical reference size, printed in the percentile line. */
-function teamLeagueCountLabel(data: PageData): string {
-  return String(data.method.teamLeagueCount);
+/**
+ * The line under the rating: the change since the last ingested game,
+ * and a note when the roster changed since then, because a roster change
+ * means the two figures describe different groups of people.
+ */
+function changeNote(team: ResolvedTeam): string {
+  if (!team.hasComparison) return "first report for this roster";
+  if (team.changeSinceLastGame === undefined) return "no change since the last report";
+  const change = team.changeSinceLastGame;
+  const sign = change >= 0 ? "+" : "";
+  const moved = `${sign}${formatNumber(change)} since last game`;
+  return team.rosterChanged ? `${moved}, roster changed since then` : moved;
 }
 
 /** The shared scale the rating bars are drawn on. */
@@ -276,7 +305,6 @@ function chemistrySection(data: PageData): string {
 /** The method section: how the numbers were made and what they mean. */
 function methodSection(data: PageData): string {
   const method = data.method;
-  const range = method.sharedGameRange;
   const sharedGameCounts = data.teams.map((section) => section.team.sharedGames);
   const leagueMin = sharedGameCounts.length > 0 ? Math.min(...sharedGameCounts) : 0;
   const leagueMax = sharedGameCounts.length > 0 ? Math.max(...sharedGameCounts) : 0;
@@ -296,15 +324,17 @@ function methodSection(data: PageData): string {
         the same players would alone. A rating near zero means the players neither lift each other nor
         drag each other down, which is a real result and not a lack of one: a roster can have a lot of
         shared history and still be flat.</p>
+        <p><b>This is a live report.</b> Each rating covers every game in our store, so it moves as the
+        season is played. The change since the last game is the difference from the previous report's
+        figure. When a roster has changed, that comparison spans two different groups of people, and
+        the card says so.</p>
       </div>
       <div class="method-grid">
-        <div>Reference set: <b class="tabular">${method.teamLeagueCount}</b> historical team-seasons, each rated from the history before its own league began</div>
         <div>Correlation with point differential: <b class="tabular">${method.correlationWithPointDiff.toFixed(3)}</b></div>
         <div>Correlation with amount of shared history: <b class="tabular">${method.correlationWithSharedPoints.toFixed(3)}</b></div>
         <div>the median game margin was <b class="tabular">${method.medianGameMargin}</b> points</div>
         <div>Games decided by 3 points or fewer: <b class="tabular">${method.gamesDecidedByThreeOrFewer}</b> of ${method.gamesInStore}</div>
         <div>Shared games behind these rosters' ratings: <b class="tabular">${leagueMin}</b> to <b class="tabular">${leagueMax}</b></div>
-        <div>Shared games behind the reference set: <b class="tabular">${range.min}</b> to <b class="tabular">${range.max}</b></div>
         <div>Store: <b class="tabular">${method.gamesInStore}</b> games, <b class="tabular">${method.pointsInStore}</b> points, <b class="tabular">${method.playersInStore}</b> players</div>
       </div>
       <h3>What these numbers do not say</h3>
@@ -336,7 +366,7 @@ export function renderPage(data: PageData): string {
 <div class="wrap">
 ${header(data)}
 <section>
-<h2>The eight teams</h2>
+<h2>The teams</h2>
 <p class="lede muted">One card per roster, ordered by rating. Each card carries the sample size behind
 the number: pairings, shared points, and shared games.</p>
 <div class="cards">${cards}</div>

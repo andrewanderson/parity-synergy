@@ -41,12 +41,27 @@ export function windowBeforeLeague(db: Db, leagueId: number): Window {
  * one past the last game in the store, so the window covers all of the
  * store's history; once the league's games are ingested, the boundary
  * becomes the league's first game id and its own games are excluded.
- * This is what keeps the rating a pre-season rating.
+ *
+ * The live report does not use this: it rates the roster over every game
+ * in the store, so the report reflects the season as it is played. This
+ * function remains for the season-opening figure and for the historical
+ * reference work.
  */
 export function preSeasonWindow(db: Db, leagueId: number): Window {
   const first = firstGameIdOfLeague(db, leagueId);
   const last = db.prepare("SELECT MAX(game_id) AS g FROM games").get() as { g: number | null };
   const boundary = first ?? (last.g ?? 0) + 1;
+  return { baselineMaxGameId: boundary, sharedMaxGameId: boundary };
+}
+
+/**
+ * The window covering every game in the store: the live report's
+ * window. A roster's synergy is rated over all of its shared history,
+ * which is what makes the figure grow as the season is played.
+ */
+export function allTimeWindow(db: Db): Window {
+  const last = db.prepare("SELECT MAX(game_id) AS g FROM games").get() as { g: number | null };
+  const boundary = (last.g ?? 0) + 1;
   return { baselineMaxGameId: boundary, sharedMaxGameId: boundary };
 }
 
@@ -111,6 +126,9 @@ const HOLD_BREAK_BASELINE_SQL = `
  * `window.baselineMaxGameId`. A player with no qualifying appearances is
  * absent; a player with no HOLD or BREAK rows gets a total of 0.
  */
+/**
+ * The hold-and-break baselines over a window, for the rating.
+ */
 export function baselinesInWindow(db: Db, window: Window): Map<number, PlayerBaseline> {
   const rows = db
     .prepare(HOLD_BREAK_BASELINE_SQL)
@@ -128,6 +146,108 @@ export function baselinesInWindow(db: Db, window: Window): Map<number, PlayerBas
     });
   }
   return baselines;
+}
+
+/**
+ * One player's salary baseline over a window: their total salary over
+ * their appearances in the window, divided by the number of those
+ * appearances. This is the same measure the store's `player_baselines`
+ * view holds, computed over the window instead of the whole store, so a
+ * windowed suppression figure subtracts the right baseline.
+ */
+export function salaryBaselinesInWindow(
+  db: Db,
+  window: Window,
+): Map<number, { mean: number; points: number }> {
+  const rows = db
+    .prepare(
+      `SELECT a.player_id AS pid, COUNT(*) AS n, COALESCE(SUM(am.value), 0) AS total
+       FROM appearances a
+       JOIN points p ON p.point_id = a.point_id
+       LEFT JOIN appearance_metric am
+         ON am.point_id = a.point_id AND am.player_id = a.player_id AND am.metric = 'salary'
+       WHERE p.game_id < @baselineMaxGameId
+       GROUP BY a.player_id`,
+    )
+    .all({ baselineMaxGameId: window.baselineMaxGameId }) as {
+    pid: number;
+    n: number;
+    total: number;
+  }[];
+  const baselines = new Map<number, { mean: number; points: number }>();
+  for (const row of rows) {
+    baselines.set(row.pid, {
+      mean: row.n === 0 ? 0 : row.total / row.n,
+      points: row.n,
+    });
+  }
+  return baselines;
+}
+
+/**
+ * The opponent suppression between players, over a window.
+ *
+ * The store's `opponent_effects` view measures this over the whole store
+ * and subtracts each player's whole-store salary baseline, so its
+ * figures move whenever a game is ingested. The live report needs a
+ * figure that moves only because the window moved, so the same
+ * calculation is done here over the window's points and the window's
+ * baselines.
+ *
+ * The measure is the weighted mean credit per weighted point: for each
+ * point, the player's salary minus their baseline, multiplied by the
+ * weight the ingest recorded for that opponent, summed and divided by
+ * the sum of the weights.
+ */
+export function windowedOpponentEffects(
+  db: Db,
+  window: Window,
+): { playerId: number; opponentId: number; pointsAgainst: number; affectedDelta: number }[] {
+  const baselines = salaryBaselinesInWindow(db, window);
+  if (baselines.size === 0) return [];
+  const rows = db
+    .prepare(
+      `WITH bl AS (
+         SELECT a.player_id AS pid, COUNT(*) AS n, COALESCE(SUM(am.value), 0) AS total
+         FROM appearances a
+         JOIN points p ON p.point_id = a.point_id
+         LEFT JOIN appearance_metric am
+           ON am.point_id = a.point_id AND am.player_id = a.player_id AND am.metric = 'salary'
+         WHERE p.game_id < @baselineMaxGameId
+         GROUP BY a.player_id
+       )
+       SELECT a.player_id AS pid_a, b.player_id AS pid_b,
+              COUNT(DISTINCT a.point_id) AS n,
+              SUM((am.value - (bl.total / bl.n)) * ow.weight) AS credit,
+              SUM(ow.weight) AS weight
+       FROM appearances a
+       JOIN appearances b
+         ON b.point_id = a.point_id AND b.line <> a.line
+       JOIN opponent_weight ow
+         ON ow.point_id = a.point_id AND ow.player_id = a.player_id AND ow.opponent_id = b.player_id
+       JOIN appearance_metric am
+         ON am.point_id = a.point_id AND am.player_id = a.player_id AND am.metric = 'salary'
+       JOIN points p ON p.point_id = a.point_id
+       JOIN bl ON bl.pid = a.player_id
+       WHERE p.game_id < @sharedMaxGameId
+       GROUP BY a.player_id, b.player_id`,
+    )
+    .all({
+      baselineMaxGameId: window.baselineMaxGameId,
+      sharedMaxGameId: window.sharedMaxGameId,
+    }) as {
+    pid_a: number;
+    pid_b: number;
+    n: number;
+    credit: number;
+    weight: number;
+  }[];
+  return rows.map((row) => ({
+    playerId: row.pid_a,
+    opponentId: row.pid_b,
+    pointsAgainst: row.n,
+    affectedDelta: row.weight === 0 ? 0 : row.credit / row.weight,
+  }));
 }
 
 const SHARED_PAIRS_SQL = `
@@ -226,19 +346,42 @@ export function sharedGamePairs(
  * How many games in the window contain at least one point where two
  * roster players shared a line. This is the team's shared-parity-games
  * count over distinct games, not the sum over pairs.
+ *
+ * `minSharedPoints` is the floor a pairing must clear to count towards
+ * the rating, so the games counted here are the games behind the rating
+ * and not every game two roster members happened to share a line in.
  */
 export function sharedGamesForRoster(
   db: Db,
   window: Window,
   playerIds: number[],
   pairs?: { gameId: number; playerId: number; teammateId: number }[],
+  minSharedPoints = RATING_MIN_SHARED_POINTS,
 ): number {
   if (playerIds.length === 0) return 0;
   const roster = new Set(playerIds);
   const loaded = pairs ?? sharedGamePairs(db, window);
-  const games = new Set<number>();
+
+  // The games each roster pairing appears in, and how many shared points
+  // that pairing has in total.
+  const gamesByPair = new Map<string, Set<number>>();
+  const pointsByPair = new Map<string, number>();
   for (const pair of loaded) {
-    if (roster.has(pair.playerId) && roster.has(pair.teammateId)) games.add(pair.gameId);
+    if (!roster.has(pair.playerId) || !roster.has(pair.teammateId)) continue;
+    const key = `${pair.playerId}:${pair.teammateId}`;
+    let games = gamesByPair.get(key);
+    if (games === undefined) {
+      games = new Set();
+      gamesByPair.set(key, games);
+    }
+    games.add(pair.gameId);
+    pointsByPair.set(key, (pointsByPair.get(key) ?? 0) + 1);
+  }
+
+  const games = new Set<number>();
+  for (const [key, pairGames] of gamesByPair) {
+    if ((pointsByPair.get(key) ?? 0) < minSharedPoints) continue;
+    for (const gameId of pairGames) games.add(gameId);
   }
   return games.size;
 }

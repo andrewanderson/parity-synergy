@@ -17,8 +17,12 @@ const data: PageData = {
           contributingPlayers: 9,
           sharedPointCount: 1504,
         },
-        percentile: 1,
         sharedGames: 88,
+        changeSinceLastGame: 3.1,
+        rosterChanged: false,
+        hasComparison: true,
+        gameHighWater: 1017,
+        rosterSignature: "1,2,3",
       },
       chemistry: [
         { playerName: "Kyle Hunter", teammates: [{ name: "Bryan Mendez", excess: 1129, sharedPoints: 31 }] },
@@ -31,7 +35,6 @@ const data: PageData = {
   heatmap: [{ rowLabel: "A", columnLabel: "B", value: 120, pairCount: 22 }],
   heatmapMax: 150,
   method: {
-    teamLeagueCount: 41,
     gamesInStore: 154,
     pointsInStore: 5898,
     playersInStore: 198,
@@ -75,11 +78,10 @@ describe("renderPage", () => {
     expect(html).toContain("73");
   });
 
-  it("shows the reference size and the sample-size range", () => {
+  it("shows the sample-size range across the rosters", () => {
     const html = renderPage(data);
-    expect(html).toContain("41");
-    expect(html).toContain("2");
-    expect(html).toContain("113");
+    expect(html).toContain("Shared games behind these rosters");
+    expect(html).toContain("88");
   });
 
   it("prints every sample size so a screenshot carries it", () => {
@@ -88,6 +90,72 @@ describe("renderPage", () => {
     expect(html).toContain("1504");
     expect(html).toContain("31");
     expect(html).toContain("88");
+  });
+
+  it("shows the change since the last game", () => {
+    const html = renderPage(data);
+    expect(html).toContain("since last game");
+    expect(html).toContain("+3.1");
+  });
+
+  it("says the roster changed when it did", () => {
+    const html = renderPage({
+      ...data,
+      teams: [
+        {
+          ...data.teams[0],
+          team: { ...data.teams[0].team, rosterChanged: true },
+        },
+      ],
+    });
+    expect(html).toContain("roster changed");
+  });
+
+  it("shows no rating for a roster with no shared history", () => {
+    const html = renderPage({
+      ...data,
+      teams: [
+        {
+          ...data.teams[0],
+          team: {
+            ...data.teams[0].team,
+            rating: {
+              rating: 0,
+              playerRatings: [],
+              pairCount: 0,
+              contributingPlayers: 0,
+              sharedPointCount: 0,
+            },
+            changeSinceLastGame: undefined,
+          },
+        },
+      ],
+    });
+    expect(html).toContain("no rating");
+    expect(html).toContain("no shared history");
+    expect(html).not.toContain("+0");
+  });
+
+  it("says a thin rating rests on little history", () => {
+    const html = renderPage({
+      ...data,
+      teams: [
+        {
+          ...data.teams[0],
+          team: {
+            ...data.teams[0].team,
+            rating: { ...data.teams[0].team.rating, pairCount: 5, contributingPlayers: 5 },
+          },
+        },
+      ],
+    });
+    expect(html).toMatch(/Only 5 pairings/);
+  });
+
+  it("does not call the rating a percentile", () => {
+    const html = renderPage(data);
+    expect(html).not.toMatch(/percentile/i);
+    expect(html).not.toMatch(/historical team-seasons/);
   });
 
   it("escapes markup in names", () => {

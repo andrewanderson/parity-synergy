@@ -71,6 +71,49 @@ export function divergingColor(value: number, max: number, hue: Palette): string
   );
 }
 
+/**
+ * The text colour that stays readable on `fill`. Chosen by the fill's
+ * relative luminance rather than by comparing the fill to the neutral
+ * grey: the colour scale interpolates, so a small value lands on a fill
+ * only slightly off neutral, and white text on it is unreadable.
+ */
+export function readableTextColour(fill: string): string {
+  const luminance = relativeLuminance(fill);
+  // The crossover is where dark and light text have equal contrast
+  // against the fill: (L + 0.05)^2 = 1.05 * (0.033 + 0.05).
+  return luminance > 0.245 ? "#333333" : "#ffffff";
+}
+
+/** The relative luminance of a `#rrggbb` colour, from 0 to 1. */
+function relativeLuminance(hexColor: string): number {
+  const [r, g, b] = channels(hexColor);
+  const linear = [r, g, b].map((value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+}
+
+/**
+ * The English ordinal suffix for a number: 1st, 2nd, 3rd, then th, with
+ * 11, 12 and 13 taking th.
+ */
+export function ordinalSuffix(value: number): string {
+  const n = Math.abs(Math.trunc(value));
+  const lastTwo = n % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return "th";
+  switch (n % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
 /** One cell of the roster-vs-roster heatmap. */
 export type HeatmapCell = {
   rowLabel: string;
@@ -123,7 +166,7 @@ export function heatmapSvg(
     const x = left + columnIndex * cellWidth;
     const y = top + rowIndex * cellHeight;
     const fill = divergingColor(cell.value, options.max, "suppression");
-    const text = fill === NEUTRAL ? "#333" : "#ffffff";
+    const text = readableTextColour(fill);
     parts.push(
       `<rect x="${x}" y="${y}" width="${cellWidth}" height="${cellHeight}" fill="${fill}" stroke="#ffffff" stroke-width="1"/>`,
     );
@@ -148,7 +191,8 @@ export function ratingBarSvg(input: {
   label: string;
   value: number;
   max: number;
-  percentile: number;
+  /** The line under the label: the sample size, and any change. */
+  note: string;
   pairCount: number;
 }): string {
   const width = 520;
@@ -161,7 +205,7 @@ export function ratingBarSvg(input: {
   const clamped = Math.max(-max, Math.min(max, value));
   const barWidthUsed = (Math.abs(clamped) / max) * (barWidth / 2);
   const fill = divergingColor(value, max, "synergy");
-  const text = fill === NEUTRAL ? "#333" : "#ffffff";
+  const text = readableTextColour(fill);
 
   const parts: string[] = [];
   parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
@@ -169,7 +213,7 @@ export function ratingBarSvg(input: {
     `<text x="0" y="22" font-size="13" font-weight="600">${escapeXml(input.label)}</text>`,
   );
   parts.push(
-    `<text x="0" y="40" font-size="11" fill="#555">${Math.round(input.percentile * 100)}th percentile, ${input.pairCount} pairs</text>`,
+    `<text x="0" y="40" font-size="11" fill="#555">${escapeXml(input.note)}</text>`,
   );
   parts.push(`<rect x="${left}" y="12" width="${barWidth}" height="24" fill="#f1f1ef"/>`);
   parts.push(
@@ -208,6 +252,15 @@ export function playerChemistrySvg(input: {
   parts.push(
     `<text x="0" y="30" font-size="10" fill="#555">synergy, hold-and-break excess per shared point, shared points in brackets</text>`,
   );
+
+  if (input.teammates.length === 0) {
+    // A player who never shared a qualifying line with this roster says
+    // so, rather than leaving an empty chart that reads as a rendering
+    // fault.
+    parts.push(
+      `<text x="0" y="${48 + rowHeight / 2}" font-size="11" fill="#555">never shared a qualifying line with a teammate on this roster</text>`,
+    );
+  }
 
   input.teammates.forEach((teammate, index) => {
     const y = 44 + index * rowHeight;

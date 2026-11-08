@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { divergingColor, heatmapSvg, ratingBarSvg, playerChemistrySvg } from "../src/preview/charts.js";
+import {
+  divergingColor,
+  heatmapSvg,
+  ordinalSuffix,
+  playerChemistrySvg,
+  readableTextColour,
+  ratingBarSvg,
+} from "../src/preview/charts.js";
 
 describe("divergingColor", () => {
   it("is neutral at zero and stronger at the extremes", () => {
@@ -43,6 +50,28 @@ describe("heatmapSvg", () => {
     expect(svg).not.toContain("https://");
   });
 
+  it("keeps the value legible on a light cell", () => {
+    // A small value lands on a fill only slightly off the neutral grey,
+    // so the text must be dark, not white.
+    const svg = heatmapSvg([{ rowLabel: "A", columnLabel: "B", value: 1, pairCount: 3 }], {
+      max: 760,
+      title: "Suppression",
+    });
+    const fill = /<rect[^>]*fill="(#[0-9a-f]{6})"/.exec(svg)?.[1];
+    expect(fill).toBeDefined();
+    expect(readableTextColour(fill!)).toBe("#333333");
+  });
+
+  it("keeps the value legible on a dark cell", () => {
+    const svg = heatmapSvg([{ rowLabel: "A", columnLabel: "B", value: 760, pairCount: 30 }], {
+      max: 760,
+      title: "Suppression",
+    });
+    const fill = /<rect[^>]*fill="(#[0-9a-f]{6})"/.exec(svg)?.[1];
+    expect(fill).toBeDefined();
+    expect(readableTextColour(fill!)).toBe("#ffffff");
+  });
+
   it("escapes markup in labels", () => {
     const svg = heatmapSvg([{ rowLabel: "A & B", columnLabel: "<script>", value: 1, pairCount: 1 }], {
       max: 150,
@@ -53,12 +82,49 @@ describe("heatmapSvg", () => {
   });
 });
 
+describe("readableTextColour", () => {
+  it("picks dark text on a light fill and light text on a dark fill", () => {
+    expect(readableTextColour("#ffffff")).toBe("#333333");
+    expect(readableTextColour("#000000")).toBe("#ffffff");
+  });
+
+  it("switches at the point where white text stops being readable", () => {
+    // Mid-lightness greys must not get white text.
+    expect(readableTextColour("#999999")).toBe("#333333");
+    expect(readableTextColour("#444444")).toBe("#ffffff");
+  });
+});
+
+describe("ordinalSuffix", () => {
+  it("uses the usual English suffix", () => {
+    expect(ordinalSuffix(1)).toBe("st");
+    expect(ordinalSuffix(2)).toBe("nd");
+    expect(ordinalSuffix(3)).toBe("rd");
+    expect(ordinalSuffix(4)).toBe("th");
+    expect(ordinalSuffix(11)).toBe("th");
+    expect(ordinalSuffix(12)).toBe("th");
+    expect(ordinalSuffix(13)).toBe("th");
+    expect(ordinalSuffix(21)).toBe("st");
+    expect(ordinalSuffix(22)).toBe("nd");
+    expect(ordinalSuffix(23)).toBe("rd");
+    expect(ordinalSuffix(101)).toBe("st");
+    expect(ordinalSuffix(111)).toBe("th");
+  });
+});
+
 describe("ratingBarSvg", () => {
-  it("prints the value, the percentile and the pair count", () => {
-    const svg = ratingBarSvg({ label: "Set Phasers to Huck", value: 65, max: 100, percentile: 1, pairCount: 24 });
+  it("prints the value, the note and the pair count", () => {
+    const svg = ratingBarSvg({
+      label: "Set Phasers to Huck",
+      value: 65,
+      max: 100,
+      note: "24 pairings, +3.1 since last game",
+      pairCount: 24,
+    });
     expect(svg).toContain("Set Phasers to Huck");
     expect(svg).toContain("65");
     expect(svg).toContain("24");
+    expect(svg).toContain("since last game");
     expect(svg).not.toContain("http");
   });
 });

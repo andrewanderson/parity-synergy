@@ -3,7 +3,6 @@ import {
   leagueTeams,
   preSeasonWindow,
   rateRoster,
-  referenceRatings,
   sharedGamePairs,
   sharedGamesForRoster,
   windowBeforeLeague,
@@ -13,8 +12,6 @@ import { teamRating } from "./rating.js";
 
 /** How the rating behaves, measured over the historical team-leagues. */
 export type RatingStats = {
-  /** How many team-leagues the statistics cover. */
-  teamLeagueCount: number;
   /** Correlation of the rating with that league's point differential. */
   correlationWithPointDiff: number;
   /** Spearman correlation of the rating with the amount of shared history. */
@@ -29,8 +26,6 @@ export type RatingStats = {
   pointsInStore: number;
   /** How many players are in the store. */
   playersInStore: number;
-  /** The range of shared games behind the historical team-leagues. */
-  sharedGameRange: { min: number; max: number; count: number };
 };
 
 /** The leagues the reference distribution and the statistics cover. */
@@ -76,7 +71,6 @@ export function computeRatingStats(db: Db): RatingStats {
   ).map((m) => m.margin);
 
   return {
-    teamLeagueCount: teamLeagues.length,
     correlationWithPointDiff: pearson(ratings, pointDiffs),
     correlationWithSharedPoints: spearman(ratings, sharedPoints),
     medianGameMargin: median(margins),
@@ -84,31 +78,6 @@ export function computeRatingStats(db: Db): RatingStats {
     gamesInStore: count(db, "SELECT COUNT(*) AS c FROM games"),
     pointsInStore: count(db, "SELECT COUNT(*) AS c FROM points"),
     playersInStore: count(db, "SELECT COUNT(*) AS c FROM players"),
-    sharedGameRange: sharedGameRange(db),
-  };
-}
-
-/**
- * The range of shared games behind the historical team-leagues: how many
- * games each team-league's roster shared a line in, from the smallest to
- * the largest. This is the sample size behind the ratings, and the range
- * is what the page publishes instead of a reliability coefficient.
- */
-export function sharedGameRange(db: Db): { min: number; max: number; count: number } {
-  const counts: number[] = [];
-  for (const leagueId of REFERENCE_LEAGUES) {
-    const window = windowBeforeLeague(db, leagueId);
-    // One read of the window's pairs, shared by every team-league in it.
-    const pairs = sharedGamePairs(db, window);
-    for (const team of leagueTeams(db, leagueId)) {
-      counts.push(sharedGamesForRoster(db, window, team.playerIds, pairs));
-    }
-  }
-  if (counts.length === 0) return { min: 0, max: 0, count: 0 };
-  return {
-    min: Math.min(...counts),
-    max: Math.max(...counts),
-    count: counts.length,
   };
 }
 
@@ -223,14 +192,6 @@ function median(values: number[]): number {
 /** One count from a scalar query. */
 function count(db: Db, sql: string): number {
   return (db.prepare(sql).get() as { c: number }).c;
-}
-
-/**
- * The reference distribution's ratings: one per historical team-league,
- * each rated from the window before its own league began.
- */
-export function referenceDistribution(db: Db): number[] {
-  return referenceRatings(db, REFERENCE_LEAGUES);
 }
 
 /**

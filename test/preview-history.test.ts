@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import {
   windowBeforeLeague,
+  allTimeWindow,
   leagueTeams,
   baselinesInWindow,
   sharedPairsInWindow,
@@ -9,6 +10,7 @@ import {
   referenceRatings,
   crossRosterOpponentEffects,
   sharedGamesForRoster,
+  windowedOpponentEffects,
 } from "../src/preview/history.js";
 
 function openStore() {
@@ -195,4 +197,42 @@ describe("crossRosterOpponentEffects", () => {
     }
     db.close();
   });
+});
+
+describe("windowedOpponentEffects", () => {
+  it("agrees with the store's view when the window is the whole store", () => {
+    const db = openStore();
+    const window = allTimeWindow(db as never);
+    const windowed = windowedOpponentEffects(db as never, window);
+    const store = new Map<number, number>();
+    for (const row of db
+      .prepare("SELECT player_id, opponent_id, affected_delta FROM opponent_effects WHERE points_against >= 5")
+      .all() as { player_id: number; opponent_id: number; affected_delta: number }[]) {
+      store.set(row.player_id * 100000 + row.opponent_id, row.affected_delta);
+    }
+    expect(windowed.length).toBeGreaterThan(0);
+    // The view's baseline is the store's whole-store baseline, which for
+    // the whole-store window is the same measure, so the figures agree.
+    let compared = 0;
+    for (const effect of windowed) {
+      const key = effect.playerId * 100000 + effect.opponentId;
+      const expected = store.get(key);
+      if (expected === undefined) continue;
+      compared++;
+      expect(Math.abs(effect.affectedDelta - expected)).toBeLessThan(1);
+    }
+    expect(compared).toBeGreaterThan(100);
+    db.close();
+  }, 300_000);
+
+  it("excludes games outside the window", () => {
+    const db = openStore();
+    const wide = windowedOpponentEffects(db as never, allTimeWindow(db as never));
+    const narrow = windowedOpponentEffects(db as never, {
+      baselineMaxGameId: 1000,
+      sharedMaxGameId: 1000,
+    });
+    expect(narrow.length).toBeLessThan(wide.length);
+    db.close();
+  }, 300_000);
 });

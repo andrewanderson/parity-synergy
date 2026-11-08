@@ -24,6 +24,26 @@ export function openDb(dbPath?: string): Db {
 }
 
 /**
+ * Open an existing store without migrating it.
+ *
+ * A command that reads the store and writes only its own table must not
+ * rewrite the game's schema: the migration drops and recreates the two
+ * effect views on every run, which is a write to a store the feature
+ * claims only to read. The file is opened read-write because the
+ * feature records its own history in it, and the caller is responsible
+ * for that being the only thing written.
+ *
+ * A store that does not exist yet is created empty, so a first run does
+ * not fail on a missing file.
+ */
+export function openExistingDb(dbPath?: string): Db {
+  const db = new Database(resolveDbPath(dbPath));
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  return db;
+}
+
+/**
  * The path `openDb` would use and whether its file is already there.
  * Callers check this *before* opening: afterwards the created file is
  * indistinguishable from one that was always there, and a report over an
