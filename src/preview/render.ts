@@ -233,7 +233,12 @@ function teamCard(section: TeamSection, data: PageData): string {
  */
 function changeNote(team: ResolvedTeam): string {
   if (!team.hasComparison) return "first report for this roster";
-  if (team.changeSinceLastGame === undefined) return "no change since the last report";
+  // A roster change on its own is news even when no games have been
+  // played since the last report: the people behind the number are
+  // different people.
+  if (team.changeSinceLastGame === undefined) {
+    return team.rosterChanged ? "roster changed since the last report" : "no change since the last report";
+  }
   const change = team.changeSinceLastGame;
   const sign = change >= 0 ? "+" : "";
   const moved = `${sign}${formatNumber(change)} since last game`;
@@ -332,7 +337,7 @@ function methodSection(data: PageData): string {
       <div class="method-grid">
         <div>Correlation with point differential: <b class="tabular">${method.correlationWithPointDiff.toFixed(3)}</b></div>
         <div>Correlation with amount of shared history: <b class="tabular">${method.correlationWithSharedPoints.toFixed(3)}</b></div>
-        <div>the median game margin was <b class="tabular">${method.medianGameMargin}</b> points</div>
+        <div>The median game margin was <b class="tabular">${method.medianGameMargin}</b> points</div>
         <div>Games decided by 3 points or fewer: <b class="tabular">${method.gamesDecidedByThreeOrFewer}</b> of ${method.gamesInStore}</div>
         <div>Shared games behind these rosters' ratings: <b class="tabular">${leagueMin}</b> to <b class="tabular">${leagueMax}</b></div>
         <div>Store: <b class="tabular">${method.gamesInStore}</b> games, <b class="tabular">${method.pointsInStore}</b> points, <b class="tabular">${method.playersInStore}</b> players</div>

@@ -6,7 +6,6 @@ import {
   pairExcess,
   playerRating,
   teamRating,
-  percentileOf,
   type PairFacts,
   type PlayerBaseline,
 } from "../src/preview/rating.js";
@@ -122,14 +121,6 @@ describe("teamRating", () => {
     const team = teamRating([1, 2], pairs, baselines);
     expect(team.pairCount).toBe(0);
     expect(team.contributingPlayers).toBe(0);
-  });
-});
-
-describe("percentileOf", () => {
-  it("is the fraction of reference values strictly below the value", () => {
-    expect(percentileOf(5, [1, 2, 3, 4])).toBe(1);
-    expect(percentileOf(0, [1, 2, 3, 4])).toBe(0);
-    expect(percentileOf(3, [1, 2, 3, 4])).toBe(0.5);
   });
 });
 

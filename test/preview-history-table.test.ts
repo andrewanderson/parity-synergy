@@ -5,11 +5,18 @@ import {
   latestHistory,
   openHistoryTable,
   previousEntry,
+  rosterSignature,
   type HistoryEntry,
 } from "../src/preview/history-table.js";
+import { hasPreviousReport, previousReport, rosterChangedSince } from "../src/preview/rosters.js";
 
+/**
+ * These tests use an in-memory store, never the real one. The history
+ * table holds the report's memory, and a unit test that deleted from it
+ * would destroy the user's record of their season.
+ */
 function openStore() {
-  const db = new Database("parity-synergy.db");
+  const db = new Database(":memory:");
   openHistoryTable(db);
   return db;
 }
@@ -42,7 +49,6 @@ describe("openHistoryTable", () => {
 describe("appendHistory", () => {
   it("stores an entry and reads it back", () => {
     const db = openStore();
-    db.prepare("DELETE FROM synergy_history").run();
     appendHistory(db, [entry]);
     const stored = db.prepare("SELECT * FROM synergy_history").all() as Record<string, unknown>[];
     expect(stored).toHaveLength(1);
@@ -55,7 +61,6 @@ describe("appendHistory", () => {
 
   it("keeps many seasons apart", () => {
     const db = openStore();
-    db.prepare("DELETE FROM synergy_history").run();
     appendHistory(db, [
       { ...entry, leagueId: 25, teamName: "A" },
       { ...entry, leagueId: 26, teamName: "A" },
@@ -72,7 +77,6 @@ describe("appendHistory", () => {
 
   it("does not store the same league and team twice for one game mark", () => {
     const db = openStore();
-    db.prepare("DELETE FROM synergy_history").run();
     appendHistory(db, [entry]);
     appendHistory(db, [entry]);
     const count = db.prepare("SELECT COUNT(*) c FROM synergy_history").get() as { c: number };
@@ -84,7 +88,6 @@ describe("appendHistory", () => {
 describe("latestHistory", () => {
   it("returns the most recent entry per team for a league", () => {
     const db = openStore();
-    db.prepare("DELETE FROM synergy_history").run();
     appendHistory(db, [
       { ...entry, rating: 10, takenAt: "2026-11-01T00:00:00.000Z", gameHighWater: 1000 },
       { ...entry, rating: 20, takenAt: "2026-11-08T00:00:00.000Z", gameHighWater: 1017 },
@@ -98,7 +101,6 @@ describe("latestHistory", () => {
 describe("previousEntry", () => {
   it("finds the entry before the given game mark, ignoring other leagues", () => {
     const db = openStore();
-    db.prepare("DELETE FROM synergy_history").run();
     appendHistory(db, [
       { ...entry, rating: 10, takenAt: "2026-11-01T00:00:00.000Z", gameHighWater: 1000 },
       { ...entry, rating: 20, takenAt: "2026-11-08T00:00:00.000Z", gameHighWater: 1017 },
@@ -111,7 +113,97 @@ describe("previousEntry", () => {
 
   it("is undefined when there is no earlier entry", () => {
     const db = openStore();
-    db.prepare("DELETE FROM synergy_history").run();
+    expect(previousEntry(db, 25, "Nobody", 1017)).toBeUndefined();
+    db.close();
+  });
+});
+
+describe("rosterSignature", () => {
+  it("is the same for a roster however its players are ordered", () => {
+    expect(rosterSignature([3, 1, 2])).toBe(rosterSignature([1, 2, 3]));
+  });
+
+  it("differs when a player joins or leaves", () => {
+    expect(rosterSignature([1, 2, 3])).not.toBe(rosterSignature([1, 2, 4]));
+  });
+});
+
+describe("previousReport", () => {
+  it("skips the entry at the current game mark, so a re-render compares with the report before it", () => {
+    const db = openStore();
+    appendHistory(db, [
+      { ...entry, rating: 10, gameHighWater: 1000 },
+      { ...entry, rating: 20, gameHighWater: 1017 },
+    ]);
+    // The current report sits at 1017, so the comparison is against the
+    // entry at 1000, not against the current report's own row.
+    expect(previousReport(db, 25, entry.teamName, 1017)?.rating).toBeCloseTo(10, 5);
+    db.close();
+  });
+
+  it("finds the entry at the current mark when there is nothing below it", () => {
+    const db = openStore();
+    appendHistory(db, [{ ...entry, rating: 20, gameHighWater: 1017 }]);
+    // Only one report exists, so there is nothing earlier to compare
+    // against: the caller must not treat the report as its own
+    // comparison.
+    expect(previousReport(db, 25, entry.teamName, 1017)).toBeUndefined();
+    db.close();
+  });
+
+  it("reports that a comparison exists once there is an earlier report", () => {
+    const db = openStore();
+    expect(hasPreviousReport(db, 25, entry.teamName, 1017)).toBe(false);
+    appendHistory(db, [{ ...entry, rating: 20, gameHighWater: 1017 }]);
+    // The only row is the current report's own, which is still a
+    // previous report: the card says no change since the last report.
+    expect(hasPreviousReport(db, 25, entry.teamName, 1017)).toBe(true);
+    appendHistory(db, [{ ...entry, rating: 10, gameHighWater: 1000 }]);
+    expect(hasPreviousReport(db, 25, entry.teamName, 1017)).toBe(true);
+    db.close();
+  });
+});
+
+describe("rosterChangedSince", () => {
+  it("is false when the roster is the same as it was", () => {
+    const db = openStore();
+    appendHistory(db, [{ ...entry, rosterSignature: "1,2,3", gameHighWater: 1017 }]);
+    expect(rosterChangedSince(db, 25, entry.teamName, 1017, "1,2,3")).toBe(false);
+    db.close();
+  });
+
+  it("is true when the roster changed at the same game mark", () => {
+    // A trade before the next ingest: the games have not advanced, but
+    // the people on the roster have, and the card must say so.
+    const db = openStore();
+    appendHistory(db, [{ ...entry, rosterSignature: "1,2,3", gameHighWater: 1017 }]);
+    expect(rosterChangedSince(db, 25, entry.teamName, 1017, "1,2,4")).toBe(true);
+    db.close();
+  });
+
+  it("is true when the roster changed in an earlier report too", () => {
+    const db = openStore();
+    appendHistory(db, [
+      { ...entry, rosterSignature: "1,2,3", gameHighWater: 1000 },
+      { ...entry, rosterSignature: "1,2,3", gameHighWater: 1017 },
+    ]);
+    expect(rosterChangedSince(db, 25, entry.teamName, 1017, "1,2,4")).toBe(true);
+    db.close();
+  });
+
+  it("is false when there is no history to compare against", () => {
+    const db = openStore();
+    expect(rosterChangedSince(db, 25, entry.teamName, 1017, "1,2,4")).toBe(false);
+    db.close();
+  });
+});
+
+describe("reading a store with no history table", () => {
+  it("returns nothing rather than failing", () => {
+    // A store that has never recorded a report has no history table, and
+    // the read helpers must not try to create one.
+    const db = new Database(":memory:");
+    expect(latestHistory(db, 25).size).toBe(0);
     expect(previousEntry(db, 25, "Nobody", 1017)).toBeUndefined();
     db.close();
   });

@@ -87,8 +87,7 @@ export async function resolveAndRateTeams(
       rosterSignature: signature,
       changeSinceLastGame:
         previous === undefined ? undefined : rating.rating - previous.rating,
-      rosterChanged:
-        previous !== undefined && previous.rosterSignature !== signature,
+      rosterChanged: rosterChangedSince(db, leagueId, team.name, highWater, signature),
       hasComparison: hasPreviousReport(db, leagueId, team.name, highWater),
     };
   });
@@ -118,9 +117,36 @@ export function previousReport(
 }
 
 /**
+ * Whether the roster has changed since the last recorded report.
+ *
+ * The check covers the entry at the current game mark as well as the
+ * one before it, because a trade can happen between two ingests: the
+ * games have not advanced, so the only sign of the change is the roster
+ * signature.
+ */
+export function rosterChangedSince(
+  db: Db,
+  leagueId: number,
+  teamName: string,
+  gameHighWater: number,
+  currentSignature: string,
+): boolean {
+  const atCurrent = previousEntry(db, leagueId, teamName, gameHighWater + 1);
+  const earlier = previousEntry(db, leagueId, teamName, gameHighWater);
+  for (const entry of [atCurrent, earlier]) {
+    if (entry !== undefined && entry.rosterSignature !== currentSignature) return true;
+  }
+  return false;
+}
+
+/**
  * Whether the report has a previous figure to compare against at all.
- * A team whose league has a recorded entry is being re-rendered, which
- * is different from a team with no history yet.
+ *
+ * A row at the current game mark is a previous report: it is the figure
+ * that report showed. So any row for the team means a comparison
+ * exists, and the card can say "no change since the last report" when
+ * the games have not advanced. Only a league with no rows at all is a
+ * first report.
  */
 export function hasPreviousReport(
   db: Db,
@@ -128,7 +154,8 @@ export function hasPreviousReport(
   teamName: string,
   gameHighWater: number,
 ): boolean {
-  return previousEntry(db, leagueId, teamName, gameHighWater + 1) !== undefined;
+  void gameHighWater;
+  return previousEntry(db, leagueId, teamName, Number.MAX_SAFE_INTEGER) !== undefined;
 }
 
 /**
@@ -193,12 +220,3 @@ export function entriesToRecord(
   return { entries, reason: entryType };
 }
 
-/** The history entry a team's figure is compared against, if any. */
-export function comparisonEntry(
-  db: Db,
-  leagueId: number,
-  teamName: string,
-  highWater: number,
-): HistoryEntry | undefined {
-  return previousEntry(db, leagueId, teamName, highWater);
-}

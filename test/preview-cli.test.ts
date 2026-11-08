@@ -1,23 +1,50 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { buildPreview } from "../src/preview/index.js";
 import { openExistingDb } from "../src/store/db.js";
 
 describe("buildPreview", () => {
   /**
-   * The history table lives in the store and persists between runs, so
-   * every test that writes to it clears its own rows afterwards and
-   * leaves the store as it was found.
+   * The history table holds the report's memory of the season, so a
+   * test that writes to it must put back what it found. The rows are
+   * read before the test and written back afterwards.
    */
-  async function withCleanHistory(fn: (db: Database.Database) => Promise<void>): Promise<void> {
+  async function withRestoredHistory(fn: (db: Database.Database) => Promise<void>): Promise<void> {
     const db = openExistingDb("parity-synergy.db");
-    db.prepare("DELETE FROM synergy_history WHERE league_id = 25").run();
+    const saved = db.prepare("SELECT * FROM synergy_history").all() as Record<string, unknown>[];
+    db.prepare("DELETE FROM synergy_history").run();
     try {
       await fn(db);
     } finally {
-      db.prepare("DELETE FROM synergy_history WHERE league_id = 25").run();
+      db.prepare("DELETE FROM synergy_history").run();
+      if (saved.length > 0) {
+        const insert = db.prepare(
+          `INSERT INTO synergy_history
+             (league_id, team_name, entry_type, taken_at, rating, pair_count,
+              shared_point_count, shared_game_count, roster_signature, game_high_water)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        const restore = db.transaction((rows: Record<string, unknown>[]) => {
+          for (const row of rows) {
+            insert.run(
+              row.league_id,
+              row.team_name,
+              row.entry_type,
+              row.taken_at,
+              row.rating,
+              row.pair_count,
+              row.shared_point_count,
+              row.shared_game_count,
+              row.roster_signature,
+              row.game_high_water,
+            );
+          }
+        });
+        restore(saved);
+      }
       db.close();
     }
   }
@@ -25,7 +52,7 @@ describe("buildPreview", () => {
   it("writes a self-contained page with the eight teams", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "preview-"));
     try {
-      await withCleanHistory(async (db) => {
+      await withRestoredHistory(async (db) => {
         const out = path.join(dir, "preview.html");
         const result = await buildPreview({
           db,
@@ -47,7 +74,7 @@ describe("buildPreview", () => {
   it("carries each team's shared-games total onto the page", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "preview-"));
     try {
-      await withCleanHistory(async (db) => {
+      await withRestoredHistory(async (db) => {
         const out = path.join(dir, "preview.html");
         await buildPreview({
           db,
@@ -66,7 +93,7 @@ describe("buildPreview", () => {
   it("records the season's first figures and does not record again without new games", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "preview-"));
     try {
-      await withCleanHistory(async (db) => {
+      await withRestoredHistory(async (db) => {
         const out = path.join(dir, "preview.html");
 
         const first = await buildPreview({
@@ -103,7 +130,7 @@ describe("buildPreview", () => {
   it("shows a change since the last game once there is history to compare against", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "preview-"));
     try {
-      await withCleanHistory(async (db) => {
+      await withRestoredHistory(async (db) => {
         const out = path.join(dir, "preview.html");
         await buildPreview({
           db,

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   divergingColor,
   heatmapSvg,
-  ordinalSuffix,
   playerChemistrySvg,
   readableTextColour,
   ratingBarSvg,
@@ -92,23 +91,6 @@ describe("readableTextColour", () => {
     // Mid-lightness greys must not get white text.
     expect(readableTextColour("#999999")).toBe("#333333");
     expect(readableTextColour("#444444")).toBe("#ffffff");
-  });
-});
-
-describe("ordinalSuffix", () => {
-  it("uses the usual English suffix", () => {
-    expect(ordinalSuffix(1)).toBe("st");
-    expect(ordinalSuffix(2)).toBe("nd");
-    expect(ordinalSuffix(3)).toBe("rd");
-    expect(ordinalSuffix(4)).toBe("th");
-    expect(ordinalSuffix(11)).toBe("th");
-    expect(ordinalSuffix(12)).toBe("th");
-    expect(ordinalSuffix(13)).toBe("th");
-    expect(ordinalSuffix(21)).toBe("st");
-    expect(ordinalSuffix(22)).toBe("nd");
-    expect(ordinalSuffix(23)).toBe("rd");
-    expect(ordinalSuffix(101)).toBe("st");
-    expect(ordinalSuffix(111)).toBe("th");
   });
 });
 

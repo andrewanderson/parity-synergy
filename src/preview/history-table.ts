@@ -57,6 +57,18 @@ export function openHistoryTable(db: Db): void {
 }
 
 /**
+ * Whether the history table is there. The read helpers use this rather
+ * than creating the table, because a store opened read-only cannot run
+ * the DDL and must not be written to by a read.
+ */
+function historyTableExists(db: Db): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='synergy_history'")
+    .get();
+  return row !== undefined;
+}
+
+/**
  * Record entries. An entry whose (league, team, game mark) is already
  * stored is ignored, so running the report twice over the same games
  * does not duplicate history.
@@ -94,7 +106,7 @@ export function appendHistory(db: Db, entries: HistoryEntry[]): number {
 
 /** The most recent entry for each team in a league, keyed by team name. */
 export function latestHistory(db: Db, leagueId: number): Map<string, HistoryEntry> {
-  openHistoryTable(db);
+  if (!historyTableExists(db)) return new Map();
   const rows = db
     .prepare(
       `SELECT * FROM synergy_history
@@ -120,7 +132,7 @@ export function previousEntry(
   teamName: string,
   gameHighWater: number,
 ): HistoryEntry | undefined {
-  openHistoryTable(db);
+  if (!historyTableExists(db)) return undefined;
   const row = db
     .prepare(
       `SELECT * FROM synergy_history
@@ -134,7 +146,7 @@ export function previousEntry(
 
 /** Every entry for a league, oldest first. The basis for a later chart. */
 export function historyForLeague(db: Db, leagueId: number): HistoryEntry[] {
-  openHistoryTable(db);
+  if (!historyTableExists(db)) return [];
   const rows = db
     .prepare(
       `SELECT * FROM synergy_history

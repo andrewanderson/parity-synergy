@@ -161,13 +161,3 @@ export function teamRating(
   };
 }
 
-/**
- * Percentile of `value` within `reference`, as a fraction from 0 to 1:
- * the share of reference values strictly below the value. Empty reference
- * gives 0.
- */
-export function percentileOf(value: number, reference: number[]): number {
-  if (reference.length === 0) return 0;
-  const below = reference.reduce((count, r) => (r < value ? count + 1 : count), 0);
-  return below / reference.length;
-}

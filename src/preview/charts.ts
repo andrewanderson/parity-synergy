@@ -94,26 +94,6 @@ function relativeLuminance(hexColor: string): number {
   return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
 }
 
-/**
- * The English ordinal suffix for a number: 1st, 2nd, 3rd, then th, with
- * 11, 12 and 13 taking th.
- */
-export function ordinalSuffix(value: number): string {
-  const n = Math.abs(Math.trunc(value));
-  const lastTwo = n % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return "th";
-  switch (n % 10) {
-    case 1:
-      return "st";
-    case 2:
-      return "nd";
-    case 3:
-      return "rd";
-    default:
-      return "th";
-  }
-}
-
 /** One cell of the roster-vs-roster heatmap. */
 export type HeatmapCell = {
   rowLabel: string;
@@ -205,7 +185,6 @@ export function ratingBarSvg(input: {
   const clamped = Math.max(-max, Math.min(max, value));
   const barWidthUsed = (Math.abs(clamped) / max) * (barWidth / 2);
   const fill = divergingColor(value, max, "synergy");
-  const text = readableTextColour(fill);
 
   const parts: string[] = [];
   parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
@@ -220,8 +199,12 @@ export function ratingBarSvg(input: {
     `<rect x="${clamped >= 0 ? mid : mid - barWidthUsed}" y="12" width="${barWidthUsed}" height="24" fill="${fill}"/>`,
   );
   parts.push(`<line x1="${mid}" y1="8" x2="${mid}" y2="40" stroke="#333" stroke-width="1"/>`);
+  // The label sits just past the end of the bar, on whichever side the
+  // bar points, so a negative rating is labelled beside its own bar.
+  const labelX = clamped >= 0 ? mid + barWidthUsed + 8 : mid - barWidthUsed - 8;
+  const anchor = clamped >= 0 ? "start" : "end";
   parts.push(
-    `<text x="${mid + barWidthUsed + 8}" y="29" font-size="13" font-weight="600" fill="${text === "#ffffff" ? "#333" : text}">${escapeXml(formatNumber(value))}</text>`,
+    `<text x="${labelX}" y="29" font-size="13" font-weight="600" text-anchor="${anchor}" fill="#333">${escapeXml(formatNumber(value))}</text>`,
   );
   parts.push("</svg>");
   return parts.join("");
@@ -239,7 +222,10 @@ export function playerChemistrySvg(input: {
   const width = 460;
   const labelWidth = 150;
   const barArea = 190;
-  const height = 48 + input.teammates.length * rowHeight;
+  // A player with no qualifying teammate still needs a row to hold the
+  // explanation, or the text falls outside the viewBox and is clipped.
+  const rows = Math.max(1, input.teammates.length);
+  const height = 48 + rows * rowHeight;
   const mid = labelWidth + barArea / 2;
   const max = Math.max(
     1,

@@ -1,7 +1,6 @@
 import type { Db } from "../store/db.js";
 import {
   leagueTeams,
-  preSeasonWindow,
   rateRoster,
   sharedGamePairs,
   sharedGamesForRoster,
@@ -194,22 +193,3 @@ function count(db: Db, sql: string): number {
   return (db.prepare(sql).get() as { c: number }).c;
 }
 
-/**
- * The rating of one roster with explicit pairs and baselines. Used by
- * callers that already hold the window's facts.
- */
-export function rateWith(
-  playerIds: number[],
-  pairs: Parameters<typeof teamRating>[1],
-  baselines: Parameters<typeof teamRating>[2],
-) {
-  return teamRating(playerIds, pairs, baselines);
-}
-
-/**
- * The pre-season window of a league, exposed so the page can label the
- * data window it used.
- */
-export function leaguePreSeasonWindow(db: Db, leagueId: number) {
-  return preSeasonWindow(db, leagueId);
-}

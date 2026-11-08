@@ -42,7 +42,6 @@ const data: PageData = {
     correlationWithSharedPoints: -0.028,
     medianGameMargin: 4,
     gamesDecidedByThreeOrFewer: 73,
-    sharedGameRange: { min: 2, max: 113, count: 41 },
   },
 };
 

@@ -55,35 +55,74 @@ describe("resolveAndRateTeams", () => {
   });
 
   it("compares against the previous report when there is one", async () => {
-    // The history table persists between runs, so this check compares
-    // the figure against the recorded history rather than asserting an
-    // absolute value.
-    const db = new Database("parity-synergy.db", { readonly: true });
-    const source = new ParityApiSource({
-      baseUrl: "https://parity.kevinhughes27.workers.dev",
-    });
-    const resolved = await resolveAndRateTeams(db as never, source as unknown as DataSource, 25);
-    const recorded = db
-      .prepare(
-        "SELECT team_name, rating FROM synergy_history WHERE league_id = 25 ORDER BY game_high_water DESC, id DESC",
-      )
-      .all() as { team_name: string; rating: number }[];
-    for (const team of resolved) {
-      const entry = recorded.find((row) => row.team_name === team.name);
-      if (entry === undefined) {
-        expect(team.changeSinceLastGame).toBeUndefined();
-        expect(team.hasComparison).toBe(false);
-      } else {
-        expect(team.hasComparison).toBe(true);
-        // The recorded figure is one of the two the comparison may use,
-        // and the change is the difference between them.
-        const candidates = recorded
-          .filter((row) => row.team_name === team.name)
-          .map((row) => team.rating.rating - row.rating);
-        expect(candidates).toContain(team.changeSinceLastGame);
+    // The history table holds the report's memory of the season, so the
+    // rows are read before the test and written back afterwards.
+    const writable = new Database("parity-synergy.db");
+    const saved = writable.prepare("SELECT * FROM synergy_history").all() as Record<string, unknown>[];
+    writable.prepare("DELETE FROM synergy_history").run();
+    writable.close();
+    try {
+      const db = new Database("parity-synergy.db");
+      // Seed one report at a lower game mark, so the comparison has a
+      // figure to use.
+      db.prepare(
+        `INSERT INTO synergy_history
+           (league_id, team_name, entry_type, taken_at, rating, pair_count,
+            shared_point_count, shared_game_count, roster_signature, game_high_water)
+         VALUES (25, 'Set Phasers to Huck (Nick)', 'ingest', '2026-11-01T00:00:00.000Z',
+                 60, 24, 1504, 54, '1,2,3', 1000)`,
+      ).run();
+      db.close();
+
+      const fresh = new Database("parity-synergy.db", { readonly: true });
+      const source = new ParityApiSource({
+        baseUrl: "https://parity.kevinhughes27.workers.dev",
+      });
+      const resolved = await resolveAndRateTeams(
+        fresh as never,
+        source as unknown as DataSource,
+        25,
+      );
+      const nick = resolved.find((t) => t.name === "Set Phasers to Huck (Nick)")!;
+      expect(nick.hasComparison).toBe(true);
+      // The change is the difference between the current figure and the
+      // recorded one.
+      expect(nick.changeSinceLastGame).toBeCloseTo(nick.rating.rating - 60, 5);
+      // A team with no recorded figure has no comparison.
+      const other = resolved.find((t) => t.name !== nick.name)!;
+      expect(other.hasComparison).toBe(false);
+      expect(other.changeSinceLastGame).toBeUndefined();
+      fresh.close();
+    } finally {
+      const restore = new Database("parity-synergy.db");
+      restore.prepare("DELETE FROM synergy_history").run();
+      if (saved.length > 0) {
+        const insert = restore.prepare(
+          `INSERT INTO synergy_history
+             (league_id, team_name, entry_type, taken_at, rating, pair_count,
+              shared_point_count, shared_game_count, roster_signature, game_high_water)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        const putBack = restore.transaction((rows: Record<string, unknown>[]) => {
+          for (const row of rows) {
+            insert.run(
+              row.league_id,
+              row.team_name,
+              row.entry_type,
+              row.taken_at,
+              row.rating,
+              row.pair_count,
+              row.shared_point_count,
+              row.shared_game_count,
+              row.roster_signature,
+              row.game_high_water,
+            );
+          }
+        });
+        putBack(saved);
       }
+      restore.close();
     }
-    db.close();
   }, 180_000);
 
   it("includes a newly ingested league 25 game in the rating", async () => {

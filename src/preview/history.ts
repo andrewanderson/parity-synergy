@@ -25,32 +25,13 @@ export type Window = {
 /**
  * The window covering every game before league `leagueId` began. A
  * league with no games in the store opens at game id 0, which makes the
- * window empty; `preSeasonWindow` is the function for that case.
+ * window empty.
  */
 export function windowBeforeLeague(db: Db, leagueId: number): Window {
   const row = db
     .prepare("SELECT MIN(game_id) AS g FROM games WHERE league_id = ?")
     .get(leagueId) as { g: number | null };
   const boundary = row.g ?? 0;
-  return { baselineMaxGameId: boundary, sharedMaxGameId: boundary };
-}
-
-/**
- * The window of history that existed before `leagueId` began, for rating
- * a roster going into that league. A league with no games yet is bounded
- * one past the last game in the store, so the window covers all of the
- * store's history; once the league's games are ingested, the boundary
- * becomes the league's first game id and its own games are excluded.
- *
- * The live report does not use this: it rates the roster over every game
- * in the store, so the report reflects the season as it is played. This
- * function remains for the season-opening figure and for the historical
- * reference work.
- */
-export function preSeasonWindow(db: Db, leagueId: number): Window {
-  const first = firstGameIdOfLeague(db, leagueId);
-  const last = db.prepare("SELECT MAX(game_id) AS g FROM games").get() as { g: number | null };
-  const boundary = first ?? (last.g ?? 0) + 1;
   return { baselineMaxGameId: boundary, sharedMaxGameId: boundary };
 }
 
@@ -203,8 +184,6 @@ export function windowedOpponentEffects(
   db: Db,
   window: Window,
 ): { playerId: number; opponentId: number; pointsAgainst: number; affectedDelta: number }[] {
-  const baselines = salaryBaselinesInWindow(db, window);
-  if (baselines.size === 0) return [];
   const rows = db
     .prepare(
       `WITH bl AS (
@@ -230,11 +209,13 @@ export function windowedOpponentEffects(
        JOIN points p ON p.point_id = a.point_id
        JOIN bl ON bl.pid = a.player_id
        WHERE p.game_id < @sharedMaxGameId
-       GROUP BY a.player_id, b.player_id`,
+       GROUP BY a.player_id, b.player_id
+       HAVING COUNT(DISTINCT a.point_id) >= @minPoints`,
     )
     .all({
       baselineMaxGameId: window.baselineMaxGameId,
       sharedMaxGameId: window.sharedMaxGameId,
+      minPoints: RATING_MIN_SHARED_POINTS,
     }) as {
     pid_a: number;
     pid_b: number;
@@ -440,7 +421,12 @@ export function crossRosterOpponentEffects(
   const inB = new Set(rosterB);
   const loaded = effects ?? allOpponentEffects(db);
   return loaded
-    .filter((effect) => inA.has(effect.playerId) && inB.has(effect.opponentId))
+    .filter(
+      (effect) =>
+        effect.pointsAgainst >= RATING_MIN_SHARED_POINTS &&
+        inA.has(effect.playerId) &&
+        inB.has(effect.opponentId),
+    )
     .map((effect) => ({
       playerId: effect.playerId,
       opponentId: effect.opponentId,
@@ -517,24 +503,3 @@ export function rosterPairsInWindow(
   return result;
 }
 
-/**
- * Rate every historical team-league named by `leagues`, each team from
- * the window before its own league began. One rating per distinct team
- * name, which is the reference distribution the percentile comes from.
- */
-export function referenceRatings(db: Db, leagues: number[]): number[] {
-  const ratings: number[] = [];
-  for (const leagueId of leagues) {
-    const window = windowBeforeLeague(db, leagueId);
-    const facts = windowFacts(db, window);
-    for (const team of leagueTeams(db, leagueId)) {
-      const roster = new Set(team.playerIds);
-      const teamPairs = facts.pairs.filter(
-        (p) => roster.has(p.playerId) && roster.has(p.teammateId) && p.playerId !== p.teammateId,
-      );
-      const rating = teamRating(team.playerIds, teamPairs, facts.baselines);
-      ratings.push(rating.rating);
-    }
-  }
-  return ratings;
-}
