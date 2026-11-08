@@ -99,7 +99,6 @@ export function heatmapSvg(
   // SVG namespace by the parser, and the page must contain no http
   // reference at all.
   parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
-  parts.push(`<title>${escapeXml(options.title)}</title>`);
   parts.push(`<text x="16" y="30" font-size="17" font-weight="600">${escapeXml(options.title)}</text>`);
   parts.push(
     `<text x="16" y="52" font-size="12" fill="#555">suppression, salary per weighted point. Negative means the player on the row has earned less against the player on the column than against a typical opponent.</text>`,
