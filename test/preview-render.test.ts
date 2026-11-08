@@ -27,8 +27,8 @@ const data: PageData = {
       chemistry: [
         { playerName: "Kyle Hunter", teammates: [{ name: "Bryan Mendez", excess: 1129, sharedPoints: 31 }] },
       ],
-      bestPair: { a: "Kyle Hunter", b: "Bryan Mendez", sharedPoints: 31, excess: 1129 },
-      worstPair: { a: "Kyle Hunter", b: "Sarah Thompson", sharedPoints: 8, excess: 375 },
+      bestPair: { a: "Kyle Hunter", b: "Bryan Mendez", sharedPoints: 31, combinedExcess: 949 },
+      worstPair: { a: "Kyle Hunter", b: "Sarah Thompson", sharedPoints: 8, combinedExcess: -3172 },
       topEarners: [{ name: "Kyle Hunter", salaryPerPoint: 5802 }],
     },
   ],
@@ -68,6 +68,20 @@ describe("renderPage", () => {
     expect(html).not.toMatch(/<link[^>]+href/i);
     expect(html).not.toMatch(/https?:\/\//);
     expect(html).not.toMatch(/@import/i);
+  });
+
+  it("shows the pair's combined excess in the pairing box", () => {
+    const html = renderPage(data);
+    // The box carries one figure: the pair's two members' excesses added
+    // together. It says "combined", so a reader does not take it as one
+    // person's number.
+    const best = /<h4>Best pairing<\/h4>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+    expect(best).toContain("+$949");
+    expect(best).toContain("combined");
+    expect(best).not.toContain("$1,129");
+    expect(best).not.toContain("$180");
+    const worst = /<h4>Weakest pairing<\/h4>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+    expect(worst).toContain("-$3,172");
   });
 
   it("does not frame the rating as a prediction of results", () => {

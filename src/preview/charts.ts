@@ -324,6 +324,17 @@ export function formatMoney(value: number): string {
   return `${negative ? "-" : ""}$${body}`;
 }
 
+/**
+ * A money amount with its sign: `+$949`, `-$3,172`.
+ *
+ * Used where two figures are compared and the sign is the difference
+ * between them.
+ */
+export function signedMoney(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  return value > 0 ? `+${formatMoney(value)}` : formatMoney(value);
+}
+
 /** Group a run of digits into thousands: `5802` becomes `5,802`. */
 function groupThousands(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");

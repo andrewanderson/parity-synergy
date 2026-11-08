@@ -114,12 +114,19 @@ export function buildTeamSection(
   };
 }
 
-/** The best or worst pairing of a roster, by the pair's mean excess. */
+/**
+ * The best or worst pairing of a roster, by the pair's mean excess.
+ *
+ * The box prints the pair's combined excess: what the two of them earn
+ * per shared point together, over what they would earn alone. The sum is
+ * exactly twice the mean, so it orders the pairs the same way the mean
+ * does and the best and weakest pairings do not move.
+ */
 function bestAndWorst(
   pairs: RosterPair[],
   names: Map<number, string>,
   which: "best" | "worst",
-): { a: string; b: string; sharedPoints: number; excess: number } | undefined {
+): { a: string; b: string; sharedPoints: number; combinedExcess: number } | undefined {
   if (pairs.length === 0) return undefined;
   const sorted = [...pairs].sort((x, y) =>
     which === "best" ? y.pairExcess - x.pairExcess : x.pairExcess - y.pairExcess,
@@ -129,7 +136,7 @@ function bestAndWorst(
     a: names.get(pair.playerId) ?? "unknown",
     b: names.get(pair.teammateId) ?? "unknown",
     sharedPoints: pair.sharedPointCount,
-    excess: pair.pairExcess,
+    combinedExcess: pair.playerExcess + pair.teammateExcess,
   };
 }
 

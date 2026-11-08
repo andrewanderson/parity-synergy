@@ -6,6 +6,7 @@ import {
   playerChemistrySvg,
   ratingBarSvg,
   signColour,
+  signedMoney,
 } from "./charts.js";
 import type { ResolvedTeam } from "./rosters.js";
 import type { RatingStats } from "./stats.js";
@@ -18,9 +19,9 @@ export type TeamSection = {
     playerName: string;
     teammates: { name: string; excess: number; sharedPoints: number }[];
   }[];
-  /** The team's best and worst pairing. */
-  bestPair?: { a: string; b: string; sharedPoints: number; excess: number };
-  worstPair?: { a: string; b: string; sharedPoints: number; excess: number };
+  /** The team's best and worst pairing, with the pair's combined excess. */
+  bestPair?: { a: string; b: string; sharedPoints: number; combinedExcess: number };
+  worstPair?: { a: string; b: string; sharedPoints: number; combinedExcess: number };
   /** The team's top earners by baseline salary per point. */
   topEarners: { name: string; salaryPerPoint: number }[];
 };
@@ -184,13 +185,13 @@ function teamCard(section: TeamSection, data: PageData): string {
 
   const best = section.bestPair
     ? `<div class="pair-box"><h4>Best pairing</h4><p><b>${escapeXml(section.bestPair.a)}</b> with
-       <b>${escapeXml(section.bestPair.b)}</b><br><span class="tabular">${formatMoney(section.bestPair.excess)}</span>
-       excess per shared point over <span class="tabular">${section.bestPair.sharedPoints}</span> shared points</p></div>`
+       <b>${escapeXml(section.bestPair.b)}</b><br><span class="tabular">${signedMoney(section.bestPair.combinedExcess)}</span>
+       combined excess per shared point over <span class="tabular">${section.bestPair.sharedPoints}</span> shared points</p></div>`
     : "";
   const worst = section.worstPair
     ? `<div class="pair-box"><h4>Weakest pairing</h4><p><b>${escapeXml(section.worstPair.a)}</b> with
-       <b>${escapeXml(section.worstPair.b)}</b><br><span class="tabular">${formatMoney(section.worstPair.excess)}</span>
-       excess per shared point over <span class="tabular">${section.worstPair.sharedPoints}</span> shared points</p></div>`
+       <b>${escapeXml(section.worstPair.b)}</b><br><span class="tabular">${signedMoney(section.worstPair.combinedExcess)}</span>
+       combined excess per shared point over <span class="tabular">${section.worstPair.sharedPoints}</span> shared points</p></div>`
     : "";
 
   const earners = section.topEarners

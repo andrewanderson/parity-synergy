@@ -7,6 +7,7 @@ import {
   readableTextColour,
   ratingBarSvg,
   signColour,
+  signedMoney,
 } from "../src/preview/charts.js";
 
 /** The channels of a `#rrggbb` colour. */
@@ -62,6 +63,22 @@ describe("signColour", () => {
   it("gives no colour to a value with no sign", () => {
     expect(signColour(0, "synergy")).toBeUndefined();
     expect(signColour(Number.NaN, "synergy")).toBeUndefined();
+  });
+});
+
+describe("signedMoney", () => {
+  it("puts the sign in front of the amount", () => {
+    expect(signedMoney(949)).toBe("+$949");
+    expect(signedMoney(-3172)).toBe("-$3,172");
+  });
+
+  it("leaves a zero without a sign", () => {
+    expect(signedMoney(0)).toBe("$0");
+  });
+
+  it("copes with a value that is not a number", () => {
+    expect(signedMoney(Number.NaN)).toBe("$0");
+    expect(signedMoney(Number.POSITIVE_INFINITY)).toBe("$0");
   });
 });
 
