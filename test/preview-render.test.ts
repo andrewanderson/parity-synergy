@@ -53,7 +53,13 @@ describe("renderPage", () => {
     expect(html).toContain("24");
     expect(html).toContain("New Player");
     expect(html).toContain("Bryan Mendez");
-    expect(html).toContain("1129");
+    expect(html).toContain("$1,129");
+  });
+
+  it("formats the salary figures as money", () => {
+    const html = renderPage(data);
+    expect(html).toContain("$5,802/point");
+    expect(html).toContain("$1,129");
   });
 
   it("makes no network requests and loads no external resources", () => {
@@ -95,6 +101,20 @@ describe("renderPage", () => {
     const html = renderPage(data);
     expect(html).toContain("since last game");
     expect(html).toContain("+3.1");
+  });
+
+  it("puts the comparison note under the rating, in the card's top right corner", () => {
+    const html = renderPage(data);
+    // The note belongs to the stat block beside the team name, not on a
+    // line of its own under the head, and it must be inside that block
+    // so it sits beneath the number.
+    expect(html).toMatch(
+      /<div class="rating tabular"[^>]*>[\s\S]*?<\/div>\s*<p class="rating-note tabular">/,
+    );
+    const head = html.slice(html.indexOf('<div class="card-head">'));
+    const headEnd = head.indexOf("</div>\n      </div>");
+    const cardHead = head.slice(0, headEnd);
+    expect(cardHead).toContain("since last game");
   });
 
   it("says the roster changed when it did", () => {
@@ -186,6 +206,34 @@ describe("renderPage", () => {
     const html = renderPage(data);
     expect(html.toLowerCase()).toContain("suppression");
     expect(html.toLowerCase()).toContain("synergy");
+  });
+
+  it("says in the legend what green and red mean", () => {
+    const html = renderPage(data);
+    expect(html).toMatch(/Green is above zero, red is below/);
+  });
+
+  it("keeps the two player counts on one line together", () => {
+    const html = renderPage(data);
+    // The two counts read as a pair, so they are wrapped in one group
+    // that wraps to the next row as a unit.
+    expect(html).toMatch(
+      /<span class="stat-group">[\s\S]*?players in our data<\/span>\s*<span class="stat tabular">[\s\S]*?contributing<\/span>\s*<\/span>/,
+    );
+  });
+
+  it("names the per-player section for what it shows", () => {
+    const html = renderPage(data);
+    expect(html).toContain("Roster synergy ratings");
+    expect(html).not.toContain("How each roster has played");
+  });
+
+  it("gives the lede a wider measure and balances its lines", () => {
+    const html = renderPage(data);
+    // A lede that nearly fits must not wrap, and one that does must not
+    // end on a stub line.
+    expect(html).toMatch(/\.lede \{[^}]*max-width: 900px[^}]*\}/);
+    expect(html).toMatch(/\.lede \{[^}]*text-wrap: balance[^}]*\}/);
   });
 
   it("does not claim a player is new to the league", () => {

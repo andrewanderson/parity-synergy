@@ -21,15 +21,21 @@ export type Palette = "suppression" | "synergy";
 /** The neutral colour at zero, shared by both palettes. */
 const NEUTRAL = "#e8e8e6";
 
-/** The warm end of each palette: positive synergy, positive suppression. */
-const WARM: Record<Palette, string> = {
-  synergy: "#b5451b",
+/**
+ * The positive end of each palette: positive synergy, positive suppression.
+ *
+ * Synergy reads green when it is positive and red when it is negative,
+ * the way a score does. The suppression palette is its own thing and is
+ * not tuned against these.
+ */
+const POSITIVE: Record<Palette, string> = {
+  synergy: "#2f7d32",
   suppression: "#7a2e8f",
 };
 
-/** The cool end of each palette: negative synergy, negative suppression. */
-const COOL: Record<Palette, string> = {
-  synergy: "#1f5b8f",
+/** The negative end of each palette: negative synergy, negative suppression. */
+const NEGATIVE: Record<Palette, string> = {
+  synergy: "#b3261e",
   suppression: "#1c7a5e",
 };
 
@@ -54,13 +60,13 @@ function hex(r: number, g: number, b: number): string {
  * selects the palette so the two measures on the page, which are in
  * different units, cannot be read as the same scale. Zero maps to a
  * neutral grey in both palettes; positive values interpolate towards the
- * palette's warm colour, negative towards its cool one, saturating at
- * `max`. Out-of-range values are clamped.
+ * palette's positive colour, negative towards its negative one,
+ * saturating at `max`. Out-of-range values are clamped.
  */
 export function divergingColor(value: number, max: number, hue: Palette): string {
   if (!Number.isFinite(value) || max <= 0) return NEUTRAL;
   const clamped = Math.max(-max, Math.min(max, value));
-  const target = clamped >= 0 ? WARM[hue] : COOL[hue];
+  const target = clamped >= 0 ? POSITIVE[hue] : NEGATIVE[hue];
   const [nr, ng, nb] = channels(NEUTRAL);
   const [tr, tg, tb] = channels(target);
   const strength = Math.abs(clamped) / max;
@@ -82,6 +88,22 @@ export function readableTextColour(fill: string): string {
   // The crossover is where dark and light text have equal contrast
   // against the fill: (L + 0.05)^2 = 1.05 * (0.033 + 0.05).
   return luminance > 0.245 ? "#333333" : "#ffffff";
+}
+
+/**
+ * The colour that carries a value's sign, at full strength.
+ *
+ * The diverging scale fades towards neutral as a value approaches zero,
+ * which is right for a bar whose length already carries the magnitude.
+ * A headline number has no such length, so it takes the palette's full
+ * colour: a small positive rating still reads as positive.
+ *
+ * A value of zero has no sign, so there is no colour and the caller
+ * keeps its own.
+ */
+export function signColour(value: number, hue: Palette): string | undefined {
+  if (!Number.isFinite(value) || value === 0) return undefined;
+  return value > 0 ? POSITIVE[hue] : NEGATIVE[hue];
 }
 
 /** The relative luminance of a `#rrggbb` colour, from 0 to 1. */
@@ -261,7 +283,7 @@ export function playerChemistrySvg(input: {
       `<rect x="${excess >= 0 ? mid : mid - barWidthUsed}" y="${y + 5}" width="${barWidthUsed}" height="11" fill="${fill}"/>`,
     );
     parts.push(
-      `<text x="${labelWidth + barArea + 12}" y="${y + 13}" font-size="11">${escapeXml(formatNumber(excess))} (${teammate.sharedPoints})</text>`,
+      `<text x="${labelWidth + barArea + 12}" y="${y + 13}" font-size="11">${escapeXml(formatMoney(excess))} (${teammate.sharedPoints})</text>`,
     );
   });
 
@@ -277,4 +299,32 @@ export function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return "0";
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/**
+ * A money amount: a dollar sign, thousands separators, and cents only
+ * when the amount is not a whole number of dollars.
+ *
+ * The minus sign goes outside the dollar sign, so a negative amount
+ * reads `-$233.40` rather than `$-233.40`.
+ */
+export function formatMoney(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  // Rounding goes through the decimal string rather than a multiplication,
+  // because a value like 1.005 is stored as 1.00499999999999989 and
+  // multiplying it by 100 rounds it down. The magnitude is rounded first so
+  // that a negative amount rounds away from zero, not towards it.
+  const magnitude = Math.abs(value);
+  const cents =
+    magnitude < 1e15 ? Math.round(Number(`${magnitude}e2`)) / 100 : magnitude;
+  const negative = value < 0 && cents !== 0;
+  const [whole, fraction] = cents.toFixed(2).split(".");
+  const grouped = groupThousands(whole!);
+  const body = fraction === "00" ? grouped : `${grouped}.${fraction}`;
+  return `${negative ? "-" : ""}$${body}`;
+}
+
+/** Group a run of digits into thousands: `5802` becomes `5,802`. */
+function groupThousands(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }

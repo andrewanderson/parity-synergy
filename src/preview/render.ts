@@ -1,9 +1,11 @@
 import {
   escapeXml,
+  formatMoney,
   formatNumber,
   heatmapSvg,
   playerChemistrySvg,
   ratingBarSvg,
+  signColour,
 } from "./charts.js";
 import type { ResolvedTeam } from "./rosters.js";
 import type { RatingStats } from "./stats.js";
@@ -62,7 +64,11 @@ p { margin: 8px 0; }
 .small { font-size: 13px; }
 .tabular { font-variant-numeric: tabular-nums; }
 .wrap { max-width: 1180px; margin: 0 auto; }
-.lede { max-width: 760px; }
+/* The lede is the section's opening paragraph. It is given a wider
+   measure than a body paragraph, so that a paragraph which nearly fits
+   does not wrap, and its lines are balanced, so that the ones which
+   must wrap do not end on a stub. */
+.lede { max-width: 900px; text-wrap: balance; }
 .cards {
   display: grid;
   grid-template-columns: 1fr;
@@ -86,13 +92,17 @@ p { margin: 8px 0; }
 }
 .card-head h3 { margin: 0; flex: 1 1 auto; min-width: 0; }
 /* The rating block takes only the width its own content needs, so the
-   number sits against the card's right edge with no gap, and the team
-   name wraps in the space that is left. */
+   number sits against the card's right edge with no gap. It does not
+   shrink: a comparison note that wrapped to two lines under the number
+   read worse than a team name that wrapped, so the name takes the
+   squeeze instead. */
 .card-head > div { flex: 0 0 auto; text-align: right; }
 .rating { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .rating-note { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
-.thin-note { font-size: 12px; color: #8a4b12; margin: 2px 0 6px; }
-.roster-note { font-size: 12px; color: #8a4b12; margin: 0 0 6px; }
+/* The warning notes are amber, well away from the red that now means
+   negative synergy, so a warning is never mistaken for a value. */
+.thin-note { font-size: 12px; color: #7a5c00; margin: 2px 0 6px; }
+.roster-note { font-size: 12px; color: #7a5c00; margin: 0 0 6px; }
 @media (max-width: 560px) {
   /* On a narrow card the name needs the full width, so the rating sits
      above it rather than squeezing it. */
@@ -102,6 +112,11 @@ p { margin: 8px 0; }
 .stat-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 4px; }
 .stat { font-size: 13px; }
 .stat b { font-variant-numeric: tabular-nums; }
+/* The two player counts read as one pair, so they are kept on one line
+   together: the group wraps to the next row as a unit rather than
+   leaving "contributing" stranded on a line of its own. */
+.stat-group { display: inline-flex; gap: 18px; }
+.stat-group .stat { white-space: nowrap; }
 .pair-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
 .pair-box { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .pair-box h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
@@ -169,34 +184,37 @@ function teamCard(section: TeamSection, data: PageData): string {
 
   const best = section.bestPair
     ? `<div class="pair-box"><h4>Best pairing</h4><p><b>${escapeXml(section.bestPair.a)}</b> with
-       <b>${escapeXml(section.bestPair.b)}</b><br><span class="tabular">${formatNumber(section.bestPair.excess)}</span>
+       <b>${escapeXml(section.bestPair.b)}</b><br><span class="tabular">${formatMoney(section.bestPair.excess)}</span>
        excess per shared point over <span class="tabular">${section.bestPair.sharedPoints}</span> shared points</p></div>`
     : "";
   const worst = section.worstPair
     ? `<div class="pair-box"><h4>Weakest pairing</h4><p><b>${escapeXml(section.worstPair.a)}</b> with
-       <b>${escapeXml(section.worstPair.b)}</b><br><span class="tabular">${formatNumber(section.worstPair.excess)}</span>
+       <b>${escapeXml(section.worstPair.b)}</b><br><span class="tabular">${formatMoney(section.worstPair.excess)}</span>
        excess per shared point over <span class="tabular">${section.worstPair.sharedPoints}</span> shared points</p></div>`
     : "";
 
   const earners = section.topEarners
     .map(
       (earner) =>
-        `<span class="chip tabular">${escapeXml(earner.name)}: ${Math.round(earner.salaryPerPoint)}/point</span>`,
+        `<span class="chip tabular">${escapeXml(earner.name)}: ${formatMoney(Math.round(earner.salaryPerPoint))}/point</span>`,
     )
     .join("");
 
   // A roster with no shared history has no rating to report. Showing a
   // zero would read as a mid-pack result rather than as missing data.
-  // Only the number sits in the corner: the comparison note goes on its
-  // own line, because a long note beside the number squeezes the team
-  // name into a narrow strip that wraps badly.
+  // The comparison note sits under the number in the corner, so the
+  // corner block always carries the headline stat and its caption
+  // together. The number takes the palette's full colour for its sign,
+  // so a small positive rating still reads as positive rather than as
+  // the near-neutral grey a faded bar would give.
+  const ratingColour = signColour(team.rating.rating, "synergy");
   const ratingBlock = hasRating
-    ? `<div class="rating tabular">${team.rating.rating >= 0 ? "+" : ""}${formatNumber(team.rating.rating)}</div>`
-    : `<div class="rating muted tabular">no rating</div>`;
-
-  const comparisonNote = hasRating
-    ? `<p class="rating-note tabular">${changeNote(team)}</p>`
-    : `<p class="rating-note">no shared history on this roster yet</p>`;
+    ? `<div class="rating tabular"${
+        ratingColour === undefined ? "" : ` style="color: ${ratingColour}"`
+      }>${team.rating.rating >= 0 ? "+" : ""}${formatNumber(team.rating.rating)}</div>
+       <p class="rating-note tabular">${changeNote(team)}</p>`
+    : `<div class="rating muted tabular">no rating</div>
+       <p class="rating-note">no shared history on this roster yet</p>`;
 
   // A roster change is its own news: the two figures then describe
   // different groups of people, so the card says so beside the number.
@@ -219,15 +237,16 @@ function teamCard(section: TeamSection, data: PageData): string {
           ${ratingBlock}
         </div>
       </div>
-      ${comparisonNote}
       ${rosterNote}
       ${thinNote}
       <div class="stat-row small">
         <span class="stat tabular"><b>${pairCount}</b> pairings</span>
         <span class="stat tabular"><b>${sharedPoints}</b> shared points</span>
         <span class="stat tabular"><b>${sharedGames}</b> shared games</span>
-        <span class="stat tabular"><b>${team.storePlayerIds.length}</b> of ${team.rosterNames.length} players in our data</span>
-        <span class="stat tabular"><b>${team.rating.contributingPlayers}</b> contributing</span>
+        <span class="stat-group">
+          <span class="stat tabular"><b>${team.storePlayerIds.length}</b> of ${team.rosterNames.length} players in our data</span>
+          <span class="stat tabular"><b>${team.rating.contributingPlayers}</b> contributing</span>
+        </span>
       </div>
       ${
         hasRating
@@ -323,11 +342,11 @@ function chemistrySection(data: PageData): string {
     .join("");
   return `
     <section>
-      <h2>How each roster has played</h2>
+      <h2>Roster synergy ratings</h2>
       <p class="lede muted">Each player's own excess with each teammate, so you can see who carries
       the chemistry and who is dragged down by it.</p>
       <p class="legend">Synergy: hold-and-break excess per shared point. Zero means the player earned
-      what they would have earned alone.</p>
+      what they would have earned alone. Green is above zero, red is below.</p>
       ${blocks}
     </section>`;
 }

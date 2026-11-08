@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   divergingColor,
+  formatMoney,
   heatmapSvg,
   playerChemistrySvg,
   readableTextColour,
   ratingBarSvg,
+  signColour,
 } from "../src/preview/charts.js";
+
+/** The channels of a `#rrggbb` colour. */
+function channels(colour: string): [number, number, number] {
+  return [
+    parseInt(colour.slice(1, 3), 16),
+    parseInt(colour.slice(3, 5), 16),
+    parseInt(colour.slice(5, 7), 16),
+  ];
+}
 
 describe("divergingColor", () => {
   it("is neutral at zero and stronger at the extremes", () => {
@@ -30,6 +41,27 @@ describe("divergingColor", () => {
   it("clamps an out-of-range value instead of producing an invalid colour", () => {
     expect(divergingColor(500, 100, "synergy")).toBe(divergingColor(100, 100, "synergy"));
     expect(divergingColor(-500, 100, "synergy")).toBe(divergingColor(-100, 100, "synergy"));
+  });
+
+  it("shows positive synergy in green and negative synergy in red", () => {
+    const [pr, pg, pb] = channels(divergingColor(100, 100, "synergy"));
+    expect(pg).toBeGreaterThan(pr);
+    expect(pg).toBeGreaterThan(pb);
+    const [nr, ng, nb] = channels(divergingColor(-100, 100, "synergy"));
+    expect(nr).toBeGreaterThan(ng);
+    expect(nr).toBeGreaterThan(nb);
+  });
+});
+
+describe("signColour", () => {
+  it("gives the palette's full colour for the sign", () => {
+    expect(signColour(65.4, "synergy")).toBe(divergingColor(100, 100, "synergy"));
+    expect(signColour(-46.5, "synergy")).toBe(divergingColor(-100, 100, "synergy"));
+  });
+
+  it("gives no colour to a value with no sign", () => {
+    expect(signColour(0, "synergy")).toBeUndefined();
+    expect(signColour(Number.NaN, "synergy")).toBeUndefined();
   });
 });
 
@@ -124,6 +156,35 @@ describe("playerChemistrySvg", () => {
     expect(svg).toContain("Bryan Mendez");
     expect(svg).toContain("31");
     expect(svg).toContain("Sarah Thompson");
-    expect(svg).toContain("-180");
+    expect(svg).toContain("-$180");
+  });
+});
+
+describe("formatMoney", () => {
+  it("puts a dollar sign and thousands separators on the amount", () => {
+    expect(formatMoney(5802)).toBe("$5,802");
+    expect(formatMoney(1234567)).toBe("$1,234,567");
+    expect(formatMoney(0)).toBe("$0");
+  });
+
+  it("shows cents on an amount that is not whole dollars", () => {
+    expect(formatMoney(-233.4)).toBe("-$233.40");
+    expect(formatMoney(374.1)).toBe("$374.10");
+    expect(formatMoney(0.5)).toBe("$0.50");
+  });
+
+  it("puts the minus sign outside the dollar sign", () => {
+    expect(formatMoney(-1)).toBe("-$1");
+    expect(formatMoney(-1234.5)).toBe("-$1,234.50");
+  });
+
+  it("rounds to the cent", () => {
+    expect(formatMoney(1.005)).toBe("$1.01");
+    expect(formatMoney(2.344)).toBe("$2.34");
+  });
+
+  it("copes with a value that is not a number", () => {
+    expect(formatMoney(Number.NaN)).toBe("$0");
+    expect(formatMoney(Number.POSITIVE_INFINITY)).toBe("$0");
   });
 });
