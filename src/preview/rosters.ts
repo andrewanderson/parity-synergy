@@ -6,7 +6,9 @@ import {
   preSeasonWindow,
   rateRoster,
   referenceRatings,
+  sharedGamePairs,
   sharedGamesForRoster,
+  windowFacts,
 } from "./history.js";
 import { percentileOf, type TeamRating } from "./rating.js";
 
@@ -34,6 +36,9 @@ export async function resolveAndRateTeams(
   const rosters = await source.getTeamRoster({ id: leagueId });
   const reference = referenceRatings(db, [21, 22, 23, 24]);
   const window = preSeasonWindow(db, leagueId);
+  // One read of the window, shared by every roster.
+  const facts = windowFacts(db, window);
+  const gamePairs = sharedGamePairs(db, window);
 
   const resolved = rosters.map((roster) => {
     const rosterNames = roster.players.map((p) => p.name);
@@ -48,8 +53,8 @@ export async function resolveAndRateTeams(
   });
 
   const withRatings = resolved.map((team) => {
-    const rating: TeamRating = rateRoster(db, window, team.storePlayerIds);
-    const sharedGames = sharedGamesForRoster(db, window, team.storePlayerIds);
+    const rating: TeamRating = rateRoster(db, window, team.storePlayerIds, facts);
+    const sharedGames = sharedGamesForRoster(db, window, team.storePlayerIds, gamePairs);
     return { ...team, rating, percentile: percentileOf(rating.rating, reference), sharedGames };
   });
 

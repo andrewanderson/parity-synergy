@@ -1,6 +1,7 @@
 import type { Db } from "../store/db.js";
 import {
   RATING_MIN_SHARED_POINTS,
+  pairExcess,
   teamRating,
   type PairFacts,
   type PlayerBaseline,
@@ -180,10 +181,45 @@ function rosterPairs(pairs: PairFacts[], playerIds: number[]): PairFacts[] {
 }
 
 /** Rate one roster against the window's history. */
-export function rateRoster(db: Db, window: Window, playerIds: number[]): TeamRating {
-  const baselines = baselinesInWindow(db, window);
-  const pairs = rosterPairs(sharedPairsInWindow(db, window), playerIds);
-  return teamRating(playerIds, pairs, baselines);
+export function rateRoster(
+  db: Db,
+  window: Window,
+  playerIds: number[],
+  facts?: WindowFacts,
+): TeamRating {
+  const loaded = facts ?? windowFacts(db, window);
+  const pairs = rosterPairs(loaded.pairs, playerIds);
+  return teamRating(playerIds, pairs, loaded.baselines);
+}
+
+/**
+ * Every same-line pair with the game it happened in, over the window.
+ * One query for the whole window, so a caller that needs this for many
+ * rosters reads it once.
+ */
+export function sharedGamePairs(
+  db: Db,
+  window: Window,
+): { gameId: number; playerId: number; teammateId: number }[] {
+  const rows = db
+    .prepare(
+      `SELECT p.game_id AS gid, a.player_id AS pid_a, b.player_id AS pid_b
+       FROM appearances a
+       JOIN appearances b
+         ON b.point_id = a.point_id AND b.line = a.line AND b.player_id > a.player_id
+       JOIN points p ON p.point_id = a.point_id
+       WHERE a.line_changed = 0 AND b.line_changed = 0 AND p.game_id < @sharedMaxGameId`,
+    )
+    .all({ sharedMaxGameId: window.sharedMaxGameId }) as {
+    gid: number;
+    pid_a: number;
+    pid_b: number;
+  }[];
+  return rows.map((row) => ({
+    gameId: row.gid,
+    playerId: row.pid_a,
+    teammateId: row.pid_b,
+  }));
 }
 
 /**
@@ -191,22 +227,20 @@ export function rateRoster(db: Db, window: Window, playerIds: number[]): TeamRat
  * roster players shared a line. This is the team's shared-parity-games
  * count over distinct games, not the sum over pairs.
  */
-export function sharedGamesForRoster(db: Db, window: Window, playerIds: number[]): number {
+export function sharedGamesForRoster(
+  db: Db,
+  window: Window,
+  playerIds: number[],
+  pairs?: { gameId: number; playerId: number; teammateId: number }[],
+): number {
   if (playerIds.length === 0) return 0;
   const roster = new Set(playerIds);
-  const marks = playerIds.map(() => "?").join(",");
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT p.game_id AS gid
-       FROM appearances a
-       JOIN appearances b
-         ON b.point_id = a.point_id AND b.line = a.line AND b.player_id > a.player_id
-       JOIN points p ON p.point_id = a.point_id
-       WHERE a.line_changed = 0 AND b.line_changed = 0
-         AND p.game_id < ? AND a.player_id IN (${marks}) AND b.player_id IN (${marks})`,
-    )
-    .all(window.sharedMaxGameId, ...playerIds, ...playerIds) as { gid: number }[];
-  return rows.length;
+  const loaded = pairs ?? sharedGamePairs(db, window);
+  const games = new Set<number>();
+  for (const pair of loaded) {
+    if (roster.has(pair.playerId) && roster.has(pair.teammateId)) games.add(pair.gameId);
+  }
+  return games.size;
 }
 
 /** One directed opponent effect between two players on different rosters. */
@@ -218,27 +252,21 @@ export type OpponentCell = {
 };
 
 /**
- * Every directed opponent effect where the affected player comes off
- * roster A and the opponent off roster B, with at least 5 points of
- * sample. Membership is checked in SQL, not in JavaScript.
+ * Every directed opponent effect with at least 5 points of sample, read
+ * once. The `opponent_effects` view is expensive to evaluate, so a
+ * caller that needs many roster pairs reads it once and matches the
+ * rosters in memory rather than re-running the view per pair.
  */
-export function crossRosterOpponentEffects(
+export function allOpponentEffects(
   db: Db,
-  rosterA: number[],
-  rosterB: number[],
-): OpponentCell[] {
-  if (rosterA.length === 0 || rosterB.length === 0) return [];
-  const marksA = rosterA.map(() => "?").join(",");
-  const marksB = rosterB.map(() => "?").join(",");
+): { playerId: number; opponentId: number; pointsAgainst: number; affectedDelta: number }[] {
   const rows = db
     .prepare(
       `SELECT player_id, opponent_id, points_against, affected_delta
        FROM opponent_effects
-       WHERE points_against >= ?
-         AND player_id IN (${marksA})
-         AND opponent_id IN (${marksB})`,
+       WHERE points_against >= ?`,
     )
-    .all(RATING_MIN_SHARED_POINTS, ...rosterA, ...rosterB) as {
+    .all(RATING_MIN_SHARED_POINTS) as {
     player_id: number;
     opponent_id: number;
     points_against: number;
@@ -253,6 +281,100 @@ export function crossRosterOpponentEffects(
 }
 
 /**
+ * Every directed opponent effect where the affected player comes off
+ * roster A and the opponent off roster B, with at least 5 points of
+ * sample. `effects` is the window's opponent effects; without it the
+ * view is read once for this pair.
+ */
+export function crossRosterOpponentEffects(
+  db: Db,
+  rosterA: number[],
+  rosterB: number[],
+  effects?: ReturnType<typeof allOpponentEffects>,
+): OpponentCell[] {
+  if (rosterA.length === 0 || rosterB.length === 0) return [];
+  const inA = new Set(rosterA);
+  const inB = new Set(rosterB);
+  const loaded = effects ?? allOpponentEffects(db);
+  return loaded
+    .filter((effect) => inA.has(effect.playerId) && inB.has(effect.opponentId))
+    .map((effect) => ({
+      playerId: effect.playerId,
+      opponentId: effect.opponentId,
+      pointsAgainst: effect.pointsAgainst,
+      affectedDelta: effect.affectedDelta,
+    }));
+}
+
+/**
+ * The qualifying pairs within a roster, with each member's own excess
+ * over their baseline and the pair's shared-point count. The pair's score
+ * is the mean of its two members' excesses, so it says how well the two
+ * of them do together rather than how one drags the other down.
+ */
+export type RosterPair = {
+  playerId: number;
+  teammateId: number;
+  sharedPointCount: number;
+  playerExcess: number;
+  teammateExcess: number;
+  /** The mean of the two members' excesses. */
+  pairExcess: number;
+};
+
+/**
+ * The facts a window holds: the baselines and the shared pairs, read
+ * once. Every read of a window is expensive (the pair query is a
+ * self-join over every appearance), and the same window is read by the
+ * rating, the roster's pair details, and the team sections, so it is
+ * read once and shared.
+ */
+export type WindowFacts = {
+  baselines: Map<number, PlayerBaseline>;
+  pairs: PairFacts[];
+};
+
+/** Read a window's baselines and shared pairs once. */
+export function windowFacts(db: Db, window: Window): WindowFacts {
+  return {
+    baselines: baselinesInWindow(db, window),
+    pairs: sharedPairsInWindow(db, window),
+  };
+}
+
+/**
+ * The roster's qualifying pairs, with both members' excesses. A pair
+ * counts only when both members are on the roster and they have at least
+ * `RATING_MIN_SHARED_POINTS` shared points.
+ */
+export function rosterPairsInWindow(
+  db: Db,
+  window: Window | undefined,
+  playerIds: number[],
+  facts?: WindowFacts,
+): RosterPair[] {
+  const loaded = facts ?? windowFacts(db, window!);
+  const pairs = rosterPairs(loaded.pairs, playerIds);
+  const missing: PlayerBaseline = { playerId: 0, holdBreakTotal: 0, appearanceCount: 0 };
+  const result: RosterPair[] = [];
+  for (const pair of pairs) {
+    if (pair.sharedPointCount < RATING_MIN_SHARED_POINTS) continue;
+    const playerBaseline = loaded.baselines.get(pair.playerId) ?? missing;
+    const teammateBaseline = loaded.baselines.get(pair.teammateId) ?? missing;
+    const excess = pairExcess(pair, playerBaseline, teammateBaseline);
+    result.push({
+      playerId: pair.playerId,
+      teammateId: pair.teammateId,
+      sharedPointCount: pair.sharedPointCount,
+      playerExcess: excess.playerExcess,
+      teammateExcess: excess.teammateExcess,
+      pairExcess: (excess.playerExcess + excess.teammateExcess) / 2,
+    });
+  }
+  return result;
+}
+
+/**
  * Rate every historical team-league named by `leagues`, each team from
  * the window before its own league began. One rating per distinct team
  * name, which is the reference distribution the percentile comes from.
@@ -261,14 +383,13 @@ export function referenceRatings(db: Db, leagues: number[]): number[] {
   const ratings: number[] = [];
   for (const leagueId of leagues) {
     const window = windowBeforeLeague(db, leagueId);
-    const baselines = baselinesInWindow(db, window);
-    const pairs = sharedPairsInWindow(db, window);
+    const facts = windowFacts(db, window);
     for (const team of leagueTeams(db, leagueId)) {
       const roster = new Set(team.playerIds);
-      const teamPairs = pairs.filter(
+      const teamPairs = facts.pairs.filter(
         (p) => roster.has(p.playerId) && roster.has(p.teammateId) && p.playerId !== p.teammateId,
       );
-      const rating = teamRating(team.playerIds, teamPairs, baselines);
+      const rating = teamRating(team.playerIds, teamPairs, facts.baselines);
       ratings.push(rating.rating);
     }
   }

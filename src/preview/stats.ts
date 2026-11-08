@@ -4,8 +4,10 @@ import {
   preSeasonWindow,
   rateRoster,
   referenceRatings,
+  sharedGamePairs,
   sharedGamesForRoster,
   windowBeforeLeague,
+  windowFacts,
 } from "./history.js";
 import { teamRating } from "./rating.js";
 
@@ -49,11 +51,18 @@ export function computeRatingStats(db: Db): RatingStats {
   const sharedPoints: number[] = [];
   const pointDiffs: number[] = [];
 
+  // One read per league window, shared by every team-league in it.
+  const factsByLeague = new Map<number, ReturnType<typeof windowFacts>>();
+  for (const leagueId of REFERENCE_LEAGUES) {
+    factsByLeague.set(leagueId, windowFacts(db, windowBeforeLeague(db, leagueId)));
+  }
+
   for (const teamLeague of teamLeagues) {
     const rating = rateRoster(
       db,
       windowBeforeLeague(db, teamLeague.leagueId),
       teamLeague.playerIds,
+      factsByLeague.get(teamLeague.leagueId),
     );
     ratings.push(rating.rating);
     sharedPoints.push(rating.sharedPointCount);
@@ -87,9 +96,13 @@ export function computeRatingStats(db: Db): RatingStats {
  */
 export function sharedGameRange(db: Db): { min: number; max: number; count: number } {
   const counts: number[] = [];
-  for (const teamLeague of historicalTeamLeagues(db)) {
-    const window = windowBeforeLeague(db, teamLeague.leagueId);
-    counts.push(sharedGamesForRoster(db, window, teamLeague.playerIds));
+  for (const leagueId of REFERENCE_LEAGUES) {
+    const window = windowBeforeLeague(db, leagueId);
+    // One read of the window's pairs, shared by every team-league in it.
+    const pairs = sharedGamePairs(db, window);
+    for (const team of leagueTeams(db, leagueId)) {
+      counts.push(sharedGamesForRoster(db, window, team.playerIds, pairs));
+    }
   }
   if (counts.length === 0) return { min: 0, max: 0, count: 0 };
   return {
