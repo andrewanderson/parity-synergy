@@ -78,10 +78,27 @@ p { margin: 8px 0; }
   padding: 14px 16px 12px;
   break-inside: avoid;
 }
-.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-head h3 { margin: 0; flex: 1 1 auto; min-width: 0; }
+/* The rating block takes only the width its own content needs, so the
+   number sits against the card's right edge with no gap, and the team
+   name wraps in the space that is left. */
+.card-head > div { flex: 0 0 auto; text-align: right; }
 .rating { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.rating-note { font-size: 12px; color: var(--muted); text-align: right; max-width: 100%; }
+.rating-note { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
 .thin-note { font-size: 12px; color: #8a4b12; margin: 2px 0 6px; }
+.roster-note { font-size: 12px; color: #8a4b12; margin: 0 0 6px; }
+@media (max-width: 560px) {
+  /* On a narrow card the name needs the full width, so the rating sits
+     above it rather than squeezing it. */
+  .card-head { flex-wrap: wrap; }
+  .card-head > div { order: -1; }
+}
 .stat-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 4px; }
 .stat { font-size: 13px; }
 .stat b { font-variant-numeric: tabular-nums; }
@@ -170,11 +187,22 @@ function teamCard(section: TeamSection, data: PageData): string {
 
   // A roster with no shared history has no rating to report. Showing a
   // zero would read as a mid-pack result rather than as missing data.
+  // Only the number sits in the corner: the comparison note goes on its
+  // own line, because a long note beside the number squeezes the team
+  // name into a narrow strip that wraps badly.
   const ratingBlock = hasRating
-    ? `<div class="rating tabular">${team.rating.rating >= 0 ? "+" : ""}${formatNumber(team.rating.rating)}</div>
-       <div class="rating-note tabular">${changeNote(team)}</div>`
-    : `<div class="rating muted tabular">no rating</div>
-       <div class="rating-note">no shared history on this roster yet</div>`;
+    ? `<div class="rating tabular">${team.rating.rating >= 0 ? "+" : ""}${formatNumber(team.rating.rating)}</div>`
+    : `<div class="rating muted tabular">no rating</div>`;
+
+  const comparisonNote = hasRating
+    ? `<p class="rating-note tabular">${changeNote(team)}</p>`
+    : `<p class="rating-note">no shared history on this roster yet</p>`;
+
+  // A roster change is its own news: the two figures then describe
+  // different groups of people, so the card says so beside the number.
+  const rosterNote = team.rosterChanged
+    ? `<p class="roster-note">The roster changed since the last report, so this figure is for a different group of people than the one it is compared against.</p>`
+    : "";
 
   // A rating on very few pairings is thin evidence, and the card has to
   // say so next to the number rather than in a footnote.
@@ -191,6 +219,8 @@ function teamCard(section: TeamSection, data: PageData): string {
           ${ratingBlock}
         </div>
       </div>
+      ${comparisonNote}
+      ${rosterNote}
       ${thinNote}
       <div class="stat-row small">
         <span class="stat tabular"><b>${pairCount}</b> pairings</span>
@@ -227,22 +257,17 @@ function teamCard(section: TeamSection, data: PageData): string {
 }
 
 /**
- * The line under the rating: the change since the last ingested game,
- * and a note when the roster changed since then, because a roster change
- * means the two figures describe different groups of people.
+ * The line under the rating: the change since the last ingested game.
+ * A roster change is reported on its own line, because it is a
+ * different kind of news and the two together do not fit beside the
+ * number.
  */
 function changeNote(team: ResolvedTeam): string {
   if (!team.hasComparison) return "first report for this roster";
-  // A roster change on its own is news even when no games have been
-  // played since the last report: the people behind the number are
-  // different people.
-  if (team.changeSinceLastGame === undefined) {
-    return team.rosterChanged ? "roster changed since the last report" : "no change since the last report";
-  }
+  if (team.changeSinceLastGame === undefined) return "no change since the last report";
   const change = team.changeSinceLastGame;
   const sign = change >= 0 ? "+" : "";
-  const moved = `${sign}${formatNumber(change)} since last game`;
-  return team.rosterChanged ? `${moved}, roster changed since then` : moved;
+  return `${sign}${formatNumber(change)} since last game`;
 }
 
 /** The shared scale the rating bars are drawn on. */
