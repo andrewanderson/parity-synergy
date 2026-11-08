@@ -375,6 +375,9 @@ function methodSection(data: PageData): string {
         players would alone. A rating near zero means the players neither lift each other nor
         drag each other down, which is a real result and not a lack of one: a roster can have a lot of
         shared history and still be flat.</p>
+        <p>A rating on little history is not a rating close to zero. The rosters with the most shared
+        history sit closest to zero and the thin ones hold the extremes in both directions, which is
+        why every card carries its sample size.</p>
         <p><b>This is a live report.</b> Each rating covers every game in our store, so it moves as the
         season is played. The change since the last game is the difference from the previous report's
         figure. When a roster has changed, that comparison spans two different groups of people, and

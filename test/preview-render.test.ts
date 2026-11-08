@@ -38,8 +38,8 @@ const data: PageData = {
     gamesInStore: 154,
     pointsInStore: 5898,
     playersInStore: 198,
-    correlationWithPointDiff: -0.131,
-    correlationWithSharedPoints: -0.082,
+    correlationWithPointDiff: -0.187,
+    correlationWithSharedPoints: -0.324,
     medianGameMargin: 4,
     gamesDecidedByThreeOrFewer: 73,
   },
@@ -106,7 +106,7 @@ describe("renderPage", () => {
     expect(html).not.toMatch(/winner/i);
     // The page publishes the measured correlation itself, so a reader
     // can check the claim that it is weak.
-    expect(html).toContain("-0.131");
+    expect(html).toContain("-0.187");
   });
 
   it("shows the median game margin and the count of close games", () => {

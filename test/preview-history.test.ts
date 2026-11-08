@@ -52,16 +52,16 @@ describe("baselinesInWindow", () => {
       baselineMaxGameId: 1018,
       sharedMaxGameId: 1018,
     });
-    expect(baselines.size).toBeGreaterThanOrEqual(196);
+    expect(baselines.size).toBeGreaterThanOrEqual(323);
     const values = [...baselines.values()].map((b) => b.salaryTotal / b.appearanceCount);
     expect(values.every((v) => Number.isFinite(v))).toBe(true);
     expect(values.some((v) => v > 0)).toBe(true);
     // Whole salary per appearance point, not the hold-and-break slice of it.
-    // Kendall Carmichael: 4,044,000 over 1,036 appearances.
+    // Kendall Carmichael: 6,366,500 over 1,541 appearances.
     const kendall = baselines.get(12);
     expect(kendall).toBeDefined();
-    expect(kendall!.salaryTotal).toBe(4044000);
-    expect(kendall!.appearanceCount).toBe(1036);
+    expect(kendall!.salaryTotal).toBe(6366500);
+    expect(kendall!.appearanceCount).toBe(1541);
     db.close();
   });
 

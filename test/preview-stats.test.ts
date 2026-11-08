@@ -7,24 +7,30 @@ describe("computeRatingStats", () => {
     const db = new Database("parity-synergy.db", { readonly: true });
     const stats = computeRatingStats(db as never);
     // The rating and a team's point differential are weakly related:
-    // -0.131 Pearson over 41 team-leagues, so about 1.7% of the variance.
+    // -0.187 Pearson over 41 team-leagues, so about 3.5% of the variance.
     // The figure is pinned, sign and all, because the page's own copy
     // says the correlation is negative.
-    expect(stats.correlationWithPointDiff).toBeCloseTo(-0.131, 2);
-    // The rating is not a sample-size proxy.
-    expect(stats.correlationWithSharedPoints).toBeCloseTo(-0.082, 2);
+    expect(stats.correlationWithPointDiff).toBeCloseTo(-0.187, 2);
+    // The rating's spread is wider where the evidence is thinner: the
+    // team-leagues with the fewest shared points hold both the highest
+    // and the lowest ratings, so the correlation with the amount of
+    // shared history is negative.
+    expect(stats.correlationWithSharedPoints).toBeCloseTo(-0.324, 2);
     expect(stats.medianGameMargin).toBe(4);
-    expect(stats.gamesDecidedByThreeOrFewer).toBe(73);
-    expect(stats.gamesInStore).toBe(154);
-    expect(stats.pointsInStore).toBe(5898);
-    expect(stats.playersInStore).toBe(198);
+    expect(stats.gamesDecidedByThreeOrFewer).toBe(154);
+    expect(stats.gamesInStore).toBe(334);
+    expect(stats.pointsInStore).toBe(13371);
+    expect(stats.playersInStore).toBe(323);
     db.close();
   }, 180_000);
 
-  it("shows the rating is not measuring sample size", () => {
+  it("shows the rating's spread is wider where the evidence is thinner", () => {
     const db = new Database("parity-synergy.db", { readonly: true });
     const stats = computeRatingStats(db as never);
-    expect(Math.abs(stats.correlationWithSharedPoints)).toBeLessThan(0.1);
+    // The team-leagues with the least shared history hold the extreme
+    // ratings in both directions, so the rating is related to how much
+    // history it rests on, and the relation is negative.
+    expect(stats.correlationWithSharedPoints).toBeLessThan(-0.1);
     db.close();
   }, 180_000);
 });

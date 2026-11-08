@@ -37,6 +37,12 @@ const REFERENCE_LEAGUES = [21, 22, 23, 24];
  * correlation with point differential is larger than it was and its sign
  * is negative. It is still far too weak to predict a result.
  *
+ * The correlation with the amount of shared history is negative too, and
+ * for a reason worth stating: the rating's spread is wider where the
+ * evidence is thinner. The team-leagues with the fewest shared points
+ * hold both the highest and the lowest ratings, so a rating on little
+ * history is not a rating close to zero.
+ *
  * The rating's reliability is deliberately not measured here. Splitting a
  * league in half is not a clean repeated measure in a league with trades
  * every two games: a half-season boundary falls mid-rebuild, so the two
