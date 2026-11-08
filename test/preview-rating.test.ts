@@ -2,21 +2,21 @@ import { describe, expect, it } from "vitest";
 import {
   RATING_MIN_SHARED_POINTS,
   RATING_SHRINKAGE_K,
-  holdBreakBaseline,
   pairExcess,
   playerRating,
+  salaryBaseline,
   teamRating,
   type PairFacts,
   type PlayerBaseline,
 } from "../src/preview/rating.js";
 
-describe("holdBreakBaseline", () => {
-  it("is the player's hold-and-break per appearance point", () => {
-    expect(holdBreakBaseline({ playerId: 1, holdBreakTotal: 6132, appearanceCount: 10 })).toBeCloseTo(613.2, 10);
+describe("salaryBaseline", () => {
+  it("is the player's whole salary per appearance point", () => {
+    expect(salaryBaseline({ playerId: 1, salaryTotal: 6132, appearanceCount: 10 })).toBeCloseTo(613.2, 10);
   });
 
   it("is zero when the player has no appearance points", () => {
-    expect(holdBreakBaseline({ playerId: 1, holdBreakTotal: 0, appearanceCount: 0 })).toBe(0);
+    expect(salaryBaseline({ playerId: 1, salaryTotal: 0, appearanceCount: 0 })).toBe(0);
   });
 });
 
@@ -26,13 +26,13 @@ describe("pairExcess", () => {
       playerId: 1,
       teammateId: 2,
       sharedPointCount: 10,
-      playerHoldBreakTotal: 8000,
-      teammateHoldBreakTotal: 8000,
+      playerSalaryTotal: 8000,
+      teammateSalaryTotal: 8000,
     };
     const result = pairExcess(
       pair,
-      { playerId: 1, holdBreakTotal: 6000, appearanceCount: 10 },
-      { playerId: 2, holdBreakTotal: 5000, appearanceCount: 10 },
+      { playerId: 1, salaryTotal: 6000, appearanceCount: 10 },
+      { playerId: 2, salaryTotal: 5000, appearanceCount: 10 },
     );
     expect(result.playerExcess).toBeCloseTo(800 - 600, 10);
     expect(result.teammateExcess).toBeCloseTo(800 - 500, 10);
@@ -43,13 +43,13 @@ describe("pairExcess", () => {
       playerId: 1,
       teammateId: 2,
       sharedPointCount: 4,
-      playerHoldBreakTotal: 4000,
-      teammateHoldBreakTotal: 4000,
+      playerSalaryTotal: 4000,
+      teammateSalaryTotal: 4000,
     };
     const result = pairExcess(
       pair,
-      { playerId: 1, holdBreakTotal: 0, appearanceCount: 0 },
-      { playerId: 2, holdBreakTotal: 0, appearanceCount: 0 },
+      { playerId: 1, salaryTotal: 0, appearanceCount: 0 },
+      { playerId: 2, salaryTotal: 0, appearanceCount: 0 },
     );
     expect(result.playerExcess).toBe(1000);
     expect(Number.isFinite(result.playerExcess)).toBe(true);
@@ -59,13 +59,13 @@ describe("pairExcess", () => {
 describe("playerRating", () => {
   it("weights each teammate by n / (n + 8) and returns undefined with no teammates", () => {
     const baselines = new Map([
-      [1, { playerId: 1, holdBreakTotal: 0, appearanceCount: 10 }],
-      [2, { playerId: 2, holdBreakTotal: 0, appearanceCount: 10 }],
-      [3, { playerId: 3, holdBreakTotal: 0, appearanceCount: 10 }],
+      [1, { playerId: 1, salaryTotal: 0, appearanceCount: 10 }],
+      [2, { playerId: 2, salaryTotal: 0, appearanceCount: 10 }],
+      [3, { playerId: 3, salaryTotal: 0, appearanceCount: 10 }],
     ]);
     const pairs: PairFacts[] = [
-      { playerId: 1, teammateId: 2, sharedPointCount: 10, playerHoldBreakTotal: 10000, teammateHoldBreakTotal: 10000 },
-      { playerId: 1, teammateId: 3, sharedPointCount: 30, playerHoldBreakTotal: 30000, teammateHoldBreakTotal: 30000 },
+      { playerId: 1, teammateId: 2, sharedPointCount: 10, playerSalaryTotal: 10000, teammateSalaryTotal: 10000 },
+      { playerId: 1, teammateId: 3, sharedPointCount: 30, playerSalaryTotal: 30000, teammateSalaryTotal: 30000 },
     ];
     const rating = playerRating(1, pairs, baselines);
     expect(rating).toBeDefined();
@@ -84,11 +84,11 @@ describe("playerRating", () => {
 describe("teamRating", () => {
   it("is the mean of its players' ratings", () => {
     const baselines = new Map([
-      [1, { playerId: 1, holdBreakTotal: 0, appearanceCount: 10 }],
-      [2, { playerId: 2, holdBreakTotal: 0, appearanceCount: 10 }],
+      [1, { playerId: 1, salaryTotal: 0, appearanceCount: 10 }],
+      [2, { playerId: 2, salaryTotal: 0, appearanceCount: 10 }],
     ]);
     const pairs: PairFacts[] = [
-      { playerId: 1, teammateId: 2, sharedPointCount: 10, playerHoldBreakTotal: 10000, teammateHoldBreakTotal: 6000 },
+      { playerId: 1, teammateId: 2, sharedPointCount: 10, playerSalaryTotal: 10000, teammateSalaryTotal: 6000 },
     ];
     const team = teamRating([1, 2], pairs, baselines);
     expect(team.rating).toBeCloseTo((1000 + 600) / 2, 10);
@@ -99,11 +99,11 @@ describe("teamRating", () => {
 
   it("excludes a player who never shared a line from the rating but counts them separately", () => {
     const baselines = new Map([
-      [1, { playerId: 1, holdBreakTotal: 0, appearanceCount: 10 }],
-      [2, { playerId: 2, holdBreakTotal: 0, appearanceCount: 10 }],
+      [1, { playerId: 1, salaryTotal: 0, appearanceCount: 10 }],
+      [2, { playerId: 2, salaryTotal: 0, appearanceCount: 10 }],
     ]);
     const pairs: PairFacts[] = [
-      { playerId: 1, teammateId: 2, sharedPointCount: 10, playerHoldBreakTotal: 10000, teammateHoldBreakTotal: 10000 },
+      { playerId: 1, teammateId: 2, sharedPointCount: 10, playerSalaryTotal: 10000, teammateSalaryTotal: 10000 },
     ];
     const team = teamRating([1, 2, 3], pairs, baselines);
     expect(team.contributingPlayers).toBe(2);
@@ -112,11 +112,11 @@ describe("teamRating", () => {
 
   it("excludes pairs below the shared-point floor", () => {
     const baselines = new Map([
-      [1, { playerId: 1, holdBreakTotal: 0, appearanceCount: 10 }],
-      [2, { playerId: 2, holdBreakTotal: 0, appearanceCount: 10 }],
+      [1, { playerId: 1, salaryTotal: 0, appearanceCount: 10 }],
+      [2, { playerId: 2, salaryTotal: 0, appearanceCount: 10 }],
     ]);
     const pairs: PairFacts[] = [
-      { playerId: 1, teammateId: 2, sharedPointCount: RATING_MIN_SHARED_POINTS - 1, playerHoldBreakTotal: 4000, teammateHoldBreakTotal: 4000 },
+      { playerId: 1, teammateId: 2, sharedPointCount: RATING_MIN_SHARED_POINTS - 1, playerSalaryTotal: 4000, teammateSalaryTotal: 4000 },
     ];
     const team = teamRating([1, 2], pairs, baselines);
     expect(team.pairCount).toBe(0);

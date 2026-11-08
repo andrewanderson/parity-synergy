@@ -46,20 +46,22 @@ describe("leagueTeams", () => {
 });
 
 describe("baselinesInWindow", () => {
-  it("gives every player a hold-and-break baseline over the window", () => {
+  it("gives every player a whole-salary baseline over the window", () => {
     const db = openStore();
     const baselines = baselinesInWindow(db as never, {
       baselineMaxGameId: 1018,
       sharedMaxGameId: 1018,
     });
-    // 196 of 198 players have salary:HOLD and salary:BREAK baseline rows
-    // over the whole store; the pre-league-24 window (game ids below
-    // 1000) holds only 191, so the whole-store window is what the pinned
-    // count spans.
     expect(baselines.size).toBeGreaterThanOrEqual(196);
-    const values = [...baselines.values()].map((b) => b.holdBreakTotal / b.appearanceCount);
+    const values = [...baselines.values()].map((b) => b.salaryTotal / b.appearanceCount);
     expect(values.every((v) => Number.isFinite(v))).toBe(true);
     expect(values.some((v) => v > 0)).toBe(true);
+    // Whole salary per appearance point, not the hold-and-break slice of it.
+    // Kendall Carmichael: 4,044,000 over 1,036 appearances.
+    const kendall = baselines.get(12);
+    expect(kendall).toBeDefined();
+    expect(kendall!.salaryTotal).toBe(4044000);
+    expect(kendall!.appearanceCount).toBe(1036);
     db.close();
   });
 
@@ -105,6 +107,24 @@ describe("sharedPairsInWindow", () => {
       sharedMaxGameId: 1000,
     });
     expect(wide.length).toBeGreaterThanOrEqual(narrow.length);
+    db.close();
+  });
+
+  it("gives each member their own whole salary across the shared points", () => {
+    const db = openStore();
+    const pairs = sharedPairsInWindow(db as never, {
+      baselineMaxGameId: 1018,
+      sharedMaxGameId: 1018,
+    });
+    // Kendall Carmichael (12) and Bryan Mendez (174) share 31 points.
+    // Kendall earned 177,500 of whole salary on them, Bryan 106,000.
+    const pair = pairs.find(
+      (p) => p.playerId === 12 && p.teammateId === 174,
+    );
+    expect(pair).toBeDefined();
+    expect(pair!.sharedPointCount).toBe(31);
+    expect(pair!.playerSalaryTotal).toBe(177500);
+    expect(pair!.teammateSalaryTotal).toBe(106000);
     db.close();
   });
 });

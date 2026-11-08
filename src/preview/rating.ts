@@ -3,23 +3,24 @@ export type PairFacts = {
   playerId: number;
   teammateId: number;
   sharedPointCount: number;
-  /** HOLD plus BREAK earned by `playerId` across the shared points. */
-  playerHoldBreakTotal: number;
-  /** HOLD plus BREAK earned by `teammateId` across the shared points. */
-  teammateHoldBreakTotal: number;
+  /** Whole salary earned by `playerId` across the shared points. */
+  playerSalaryTotal: number;
+  /** Whole salary earned by `teammateId` across the shared points. */
+  teammateSalaryTotal: number;
 };
 
-/** One player's baseline: HOLD plus BREAK per appearance point. */
+/** One player's baseline: whole salary per appearance point. */
 export type PlayerBaseline = {
   playerId: number;
-  holdBreakTotal: number;
+  /** Whole salary earned across the player's appearances. */
+  salaryTotal: number;
   appearanceCount: number;
 };
 
 /** A player's rating: their mean excess with each teammate, weighted by precision. */
 export type PlayerRating = {
   playerId: number;
-  /** Weighted mean excess hold-and-break per shared point. */
+  /** Weighted mean excess whole salary per shared point. */
   excessPerPoint: number;
   /** How many teammates contributed. */
   teammateCount: number;
@@ -42,15 +43,15 @@ export const RATING_MIN_SHARED_POINTS = 5;
 /** The shrinkage constant: precision weight is n / (n + 8). */
 export const RATING_SHRINKAGE_K = 8;
 
-/** HOLD plus BREAK baseline per point, or 0 when the player has none. */
-export function holdBreakBaseline(player: PlayerBaseline): number {
+/** Whole salary per appearance point, or 0 when the player has none. */
+export function salaryBaseline(player: PlayerBaseline): number {
   if (player.appearanceCount === 0) return 0;
-  return player.holdBreakTotal / player.appearanceCount;
+  return player.salaryTotal / player.appearanceCount;
 }
 
 /**
- * One player's excess with one teammate, in hold-and-break per shared
- * point: the pair's own rate minus the player's personal baseline.
+ * One player's excess with one teammate, in whole salary per shared
+ * point: the pair's own rate minus the player's personal baseline rate.
  */
 export function pairExcess(
   pair: PairFacts,
@@ -58,11 +59,11 @@ export function pairExcess(
   teammateBaseline: PlayerBaseline,
 ): { playerExcess: number; teammateExcess: number } {
   const n = pair.sharedPointCount;
-  const playerRate = n === 0 ? 0 : pair.playerHoldBreakTotal / n;
-  const teammateRate = n === 0 ? 0 : pair.teammateHoldBreakTotal / n;
+  const playerRate = n === 0 ? 0 : pair.playerSalaryTotal / n;
+  const teammateRate = n === 0 ? 0 : pair.teammateSalaryTotal / n;
   return {
-    playerExcess: playerRate - holdBreakBaseline(playerBaseline),
-    teammateExcess: teammateRate - holdBreakBaseline(teammateBaseline),
+    playerExcess: playerRate - salaryBaseline(playerBaseline),
+    teammateExcess: teammateRate - salaryBaseline(teammateBaseline),
   };
 }
 
@@ -88,7 +89,7 @@ export function playerRating(
 ): PlayerRating | undefined {
   const mine = qualifyingPairs(playerId, pairs);
   if (mine.length === 0) return undefined;
-  const missing: PlayerBaseline = { playerId, holdBreakTotal: 0, appearanceCount: 0 };
+  const missing: PlayerBaseline = { playerId, salaryTotal: 0, appearanceCount: 0 };
   let weightedSum = 0;
   let totalWeight = 0;
   for (const pair of mine) {
@@ -136,8 +137,8 @@ export function teamRating(
       playerId: p.teammateId,
       teammateId: p.playerId,
       sharedPointCount: p.sharedPointCount,
-      playerHoldBreakTotal: p.teammateHoldBreakTotal,
-      teammateHoldBreakTotal: p.playerHoldBreakTotal,
+      playerSalaryTotal: p.teammateSalaryTotal,
+      teammateSalaryTotal: p.playerSalaryTotal,
     },
   ]);
   const ratings = playerIds
@@ -160,4 +161,3 @@ export function teamRating(
     sharedPointCount: qualifying.reduce((sum, p) => sum + p.sharedPointCount, 0),
   };
 }
-
