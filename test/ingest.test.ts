@@ -94,6 +94,79 @@ class StubSource implements DataSource {
   }
 }
 
+/** The id a newer league's games carry: a UUID, not a number. */
+const UUID = "e5df9c1f-b861-4dc9-bf9f-2514abebb3e9";
+
+/**
+ * A stub source that serves the game 1000 capture under a UUID, the way the
+ * API reports the games of a newer league. `mutate` changes the canonical
+ * payload so that one reconciliation gate fails.
+ */
+class UuidSource implements DataSource {
+  constructor(
+    private readonly gameId: string = UUID,
+    private readonly mutate?: (payload: GamePayload) => void,
+  ) {}
+
+  async listSupportedLeagues(): Promise<SupportedLeague[]> {
+    return [league];
+  }
+
+  async listGames(): Promise<ApiGame[]> {
+    const raw = captures.get(1000) as ApiGame;
+    return [{ ...raw, id: this.gameId, homeRoster: [], awayRoster: [], points: [], stats: {} }];
+  }
+
+  async getGame(_leagueRef: LeagueRef, gameId: number | string): Promise<GamePayload> {
+    if (String(gameId) !== this.gameId) {
+      throw new Error(`game ${String(gameId)} not found`);
+    }
+    const raw = captures.get(1000) as ApiGame;
+    const payload = canonicalizeGame({ ...raw, id: this.gameId }, league);
+    this.mutate?.(payload);
+    return payload;
+  }
+}
+
+/**
+ * A stub source that serves the two captures under the ids and weeks it is
+ * given, listed in that order, so a test can pin how the store numbers a
+ * league's games.
+ */
+class ListedSource implements DataSource {
+  constructor(
+    private readonly games: Array<{ id: string; week: number; capture: number }>,
+  ) {}
+
+  async listSupportedLeagues(): Promise<SupportedLeague[]> {
+    return [league];
+  }
+
+  async listGames(): Promise<ApiGame[]> {
+    return this.games.map((game) => {
+      const raw = captures.get(game.capture) as ApiGame;
+      return {
+        ...raw,
+        id: game.id,
+        week: game.week,
+        homeRoster: [],
+        awayRoster: [],
+        points: [],
+        stats: {},
+      };
+    });
+  }
+
+  async getGame(_leagueRef: LeagueRef, gameId: number | string): Promise<GamePayload> {
+    const wanted = this.games.find((game) => String(game.id) === String(gameId));
+    if (wanted === undefined) {
+      throw new Error(`game ${String(gameId)} not found`);
+    }
+    const raw = captures.get(wanted.capture) as ApiGame;
+    return canonicalizeGame({ ...raw, id: wanted.id, week: wanted.week }, league);
+  }
+}
+
 /** A source whose canonical payload is mutated so that one gate fails. */
 class MutatingSource extends StubSource {
   constructor(private readonly mutate: (payload: GamePayload) => void) {
@@ -192,8 +265,11 @@ describe("ingestGame", () => {
     expect(count(db, "SELECT COUNT(*) AS n FROM player_baselines")).toBe(0);
 
     const log = db
-      .prepare("SELECT status, reason FROM ingest_log WHERE game_id = 1000")
-      .get() as { status: string; reason: string };
+      .prepare("SELECT game_id, status, reason FROM ingest_log WHERE external_id = '1000'")
+      .get() as { game_id: number | null; status: string; reason: string };
+    // The rejection names the game by the API's id: it has no stored game
+    // to point at.
+    expect(log.game_id).toBeNull();
     expect(log.status).toBe("rejected");
     expect(log.reason).toContain("does not match API pay");
   });
@@ -282,5 +358,136 @@ describe("ingestLeagues", () => {
     // One log row and one games row per ingested game, not two.
     expect(count(db, "SELECT COUNT(*) AS n FROM ingest_log")).toBe(2);
     expect(count(db, "SELECT COUNT(*) AS n FROM games")).toBe(2);
+  });
+});
+
+describe("games the API identifies by UUID", () => {
+  it("ingests a UUID game under an internal id and records the external id", async () => {
+    const outcome = await ingestGame(db, new UuidSource(), 24, UUID);
+    expect(outcome).toEqual({ gameId: UUID, leagueId: 24, status: "ok" });
+
+    const game = db
+      .prepare("SELECT game_id, external_id FROM games")
+      .get() as { game_id: number; external_id: string };
+    // The store's own id is the row's key: the API's id is not a number and
+    // cannot be one.
+    expect(Number.isInteger(game.game_id)).toBe(true);
+    expect(game.external_id).toBe(UUID);
+
+    const log = db
+      .prepare("SELECT game_id, external_id FROM ingest_log")
+      .get() as { game_id: number; external_id: string };
+    expect(log.external_id).toBe(UUID);
+    expect(log.game_id).toBe(game.game_id);
+
+    // The facts landed: the fixture's points.
+    expect(count(db, "SELECT COUNT(*) AS n FROM points")).toBe(45);
+  });
+
+  it("is idempotent for a UUID game", async () => {
+    const source = new UuidSource();
+    await ingestGame(db, source, 24, UUID);
+    await ingestGame(db, source, 24, UUID);
+    expect(count(db, "SELECT COUNT(*) AS n FROM games")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM points")).toBe(45);
+  });
+
+  it("logs a rejected UUID game against its external id", async () => {
+    const badSource = new UuidSource(UUID, (payload) => {
+      payload.stats[0]!.pay += 1;
+    });
+    const outcome = await ingestGame(db, badSource, 24, UUID);
+    expect(outcome.status).toBe("rejected");
+    expect(count(db, "SELECT COUNT(*) AS n FROM games")).toBe(0);
+
+    const log = db
+      .prepare("SELECT external_id, status FROM ingest_log")
+      .get() as { external_id: string; status: string };
+    expect(log.external_id).toBe(UUID);
+    expect(log.status).toBe("rejected");
+  });
+
+  it("gives a UUID game an internal id after the games already stored", async () => {
+    await ingestGame(db, new StubSource(), 24, 1000);
+    await ingestGame(db, new UuidSource(), 24, UUID);
+
+    const ids = (
+      db.prepare("SELECT game_id FROM games ORDER BY game_id").all() as {
+        game_id: number;
+      }[]
+    ).map((row) => row.game_id);
+    // Internal ids stay chronological: the rating windows read them as a
+    // boundary.
+    expect(ids).toEqual([1000, 1001]);
+  });
+
+  it("ingests a listed UUID game, which the listing reports as a string", async () => {
+    const outcomes = await ingestLeagues({
+      leagues: [24],
+      db,
+      source: new UuidSource(),
+    });
+    expect(outcomes.map((outcome) => outcome.gameId)).toEqual([UUID]);
+    expect(count(db, "SELECT COUNT(*) AS n FROM games")).toBe(1);
+  });
+
+  it("does not let a rejected game take the internal id of the next game", async () => {
+    const badSource = new UuidSource(UUID, (payload) => {
+      payload.stats[0]!.pay += 1;
+    });
+    const rejected = await ingestGame(db, badSource, 24, UUID);
+    expect(rejected.status).toBe("rejected");
+
+    // A rejected game has no stored game, so it claims no internal id: the
+    // id it would have had belongs to the game stored after it.
+    const rejection = db
+      .prepare("SELECT game_id, external_id FROM ingest_log")
+      .get() as { game_id: number | null; external_id: string };
+    expect(rejection.game_id).toBeNull();
+    expect(rejection.external_id).toBe(UUID);
+
+    const next = "11111111-1111-1111-1111-111111111111";
+    await ingestGame(db, new UuidSource(next), 24, next);
+
+    const rows = db
+      .prepare("SELECT game_id, status FROM ingest_log ORDER BY rowid")
+      .all() as { game_id: number | null; status: string }[];
+    expect(rows).toEqual([
+      { game_id: null, status: "rejected" },
+      { game_id: 1, status: "ok" },
+    ]);
+  });
+
+  it("records the API's id the same way when it looks the game up and when it writes it", async () => {
+    // The API's id with stray spaces: the store normalises it once, so the
+    // lookup and the write name the same game.
+    const source = new ListedSource([{ id: " 1000 ", week: 1, capture: 1000 }]);
+    await ingestLeagues({ leagues: [24], db, source });
+
+    const game = db
+      .prepare("SELECT game_id, external_id FROM games")
+      .get() as { game_id: number; external_id: string };
+    expect(game.external_id).toBe("1000");
+
+    // A second ingest finds the same game instead of failing on the unique
+    // index over the league and the external id.
+    await ingestLeagues({ leagues: [24], db, source });
+    expect(count(db, "SELECT COUNT(*) AS n FROM games")).toBe(1);
+  });
+
+  it("numbers a league's games in week order, whatever order the listing gives them", async () => {
+    const source = new ListedSource([
+      { id: "week-two", week: 2, capture: 1001 },
+      { id: "week-one", week: 1, capture: 1000 },
+    ]);
+    await ingestLeagues({ leagues: [24], db, source });
+
+    const rows = db
+      .prepare("SELECT game_id, week FROM games ORDER BY game_id")
+      .all() as { game_id: number; week: number }[];
+    expect(rows).toEqual([
+      { game_id: 1, week: 1 },
+      { game_id: 2, week: 2 },
+    ]);
   });
 });

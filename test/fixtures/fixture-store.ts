@@ -39,8 +39,8 @@ export function buildFixtureStore(games: FixtureGame[]): Db {
   const insertGame = db.prepare(
     `INSERT INTO games
        (game_id, league_id, week, date, home_team, away_team, home_score, away_score,
-        salary_rules_version, imported_at)
-     VALUES (?, ?, ?, NULL, 'Home', 'Away', 1, 0, 1, 'fixture')`,
+        salary_rules_version, imported_at, external_id)
+     VALUES (?, ?, ?, NULL, 'Home', 'Away', 1, 0, 1, 'fixture', ?)`,
   );
   const insertPoint = db.prepare(
     `INSERT INTO points (point_id, game_id, point_number, offense_team, defense_team, duration_sec)
@@ -84,7 +84,7 @@ export function buildFixtureStore(games: FixtureGame[]): Db {
     };
 
     for (const game of games) {
-      insertGame.run(nextGameId, game.league, game.week);
+      insertGame.run(nextGameId, game.league, game.week, String(nextGameId));
       game.points.forEach((point, index) => {
         const pointId = nextPointId++;
         insertPoint.run(pointId, nextGameId, index + 1);

@@ -142,7 +142,7 @@ describe("resolveAndRateTeams", () => {
     // moves the rating rather than merely existing.
     const insert = db.transaction(() => {
       db.prepare(
-        "INSERT INTO games (game_id, league_id, week, date, home_team, away_team, home_score, away_score, salary_rules_version, imported_at) VALUES (2000, 25, 1, NULL, 'Test A', 'Test B', 1, 0, 1, 'now')",
+        "INSERT INTO games (game_id, league_id, week, date, home_team, away_team, home_score, away_score, salary_rules_version, imported_at, external_id) VALUES (2000, 25, 1, NULL, 'Test A', 'Test B', 1, 0, 1, 'now', '2000')",
       ).run();
       db.prepare(
         "INSERT INTO points (point_id, game_id, point_number, offense_team, defense_team, duration_sec) VALUES (99999, 2000, 1, 'Test A', 'Test B', 60)",

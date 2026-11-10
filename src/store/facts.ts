@@ -3,6 +3,7 @@ import type { FullGamePayload } from "parity-mcp/server";
 import type { PointStatsPayload } from "parity-mcp/engine/pointStats";
 import { normalizePlayerRef, resolvePlayerTeam } from "parity-mcp/data/normalize";
 import { playerIdFor, upsertPlayer } from "./baselines.js";
+import { normalizeExternalGameId, resolveGameId } from "./gameIds.js";
 
 /** One player's entry in the MCP's per-point stat derivation. */
 type PointPlayer = PointStatsPayload["points"][number]["players"][number];
@@ -28,16 +29,24 @@ type LedgerPlayer = FullGamePayload["salaryLedger"]["points"][number]["playerSal
  * Returns the distinct player ids that appeared in the game, in first-seen
  * order, plus any player whose facts this write removed, so the caller can
  * rebuild exactly the baselines the write could have invalidated.
+ *
+ * The game's rows are keyed by the store's own integer id, not by the id the
+ * API reports: a newer league identifies its games by UUID, which cannot be
+ * the key of an integer column. The API's id is written to `external_id`
+ * beside it. `gameId` is the internal id to write, resolved from the API's
+ * id when the caller does not name one.
  */
 export function writeGameFacts(
   db: Db,
   payload: FullGamePayload,
   pointStats: PointStatsPayload,
+  gameId: number = resolveGameId(db, payload.league.id, payload.game.id),
 ): number[] {
+  const externalId = String(normalizeExternalGameId(payload.game.id));
   const insertGame = db.prepare(
     `INSERT INTO games
-       (game_id, league_id, week, date, home_team, away_team, home_score, away_score, salary_rules_version, imported_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (game_id, league_id, week, date, home_team, away_team, home_score, away_score, salary_rules_version, imported_at, external_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertPoint = db.prepare(
     `INSERT INTO points (game_id, point_number, offense_team, defense_team, duration_sec)
@@ -64,8 +73,8 @@ export function writeGameFacts(
      VALUES (?, ?, ?, ?, ?)`,
   );
   const insertLog = db.prepare(
-    `INSERT INTO ingest_log (game_id, status, reason, checked_at)
-     VALUES (?, 'ok', NULL, ?)`,
+    `INSERT INTO ingest_log (game_id, status, reason, checked_at, external_id)
+     VALUES (?, 'ok', NULL, ?, ?)`,
   );
   const setDivision = db.prepare(
     "UPDATE players SET division = ? WHERE player_id = ?",
@@ -121,15 +130,15 @@ export function writeGameFacts(
     // to every child fact table. Collect the players whose facts this write
     // is about to remove first, so a player who drops out of a re-ingested
     // game still reaches the baseline rebuild.
-    const removed = selectGamePlayers.all(payload.game.id) as Array<{
+    const removed = selectGamePlayers.all(gameId) as Array<{
       player_id: number;
     }>;
-    deletePoints.run(payload.game.id);
-    deleteGame.run(payload.game.id);
+    deletePoints.run(gameId);
+    deleteGame.run(gameId);
 
     // 2. The game row.
     insertGame.run(
-      payload.game.id,
+      gameId,
       payload.league.id,
       payload.game.week,
       payload.game.date,
@@ -139,6 +148,7 @@ export function writeGameFacts(
       payload.game.awayScore,
       payload.salaryLedger.rulesVersion,
       new Date().toISOString(),
+      externalId,
     );
 
     for (const point of payload.game.points) {
@@ -154,7 +164,7 @@ export function writeGameFacts(
           ? resolvePlayerTeam(point.defensePlayers[0].raw, payload).team
           : null;
       const pointInfo = insertPoint.run(
-        payload.game.id,
+        gameId,
         point.pointNumber,
         offenseTeam,
         defenseTeam,
@@ -326,7 +336,7 @@ export function writeGameFacts(
     }
 
     // 12. The ingest log, inside the same transaction as the facts.
-    insertLog.run(payload.game.id, new Date().toISOString());
+    insertLog.run(gameId, new Date().toISOString(), externalId);
 
     // Removed players are appended after the written players: a player who
     // appears in the new version keeps its first-seen position, so a
