@@ -1,0 +1,341 @@
+/**
+ * The SVG primitives for the preview page. Every function returns a
+ * fragment string that begins with `<svg`. Nothing here depends on
+ * interaction, external fonts, or a network resource: the page is read
+ * from a screenshot, so every value is printed as text next to its
+ * colour.
+ */
+
+/** Escape the characters that would otherwise be markup. */
+export function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** The two palettes. The measures are in different units and must not be read against each other. */
+export type Palette = "suppression" | "synergy";
+
+/** The neutral colour at zero, shared by both palettes. */
+const NEUTRAL = "#e8e8e6";
+
+/**
+ * The positive end of each palette: positive synergy, positive suppression.
+ *
+ * Synergy reads green when it is positive and red when it is negative,
+ * the way a score does. The suppression palette is its own thing and is
+ * not tuned against these.
+ */
+const POSITIVE: Record<Palette, string> = {
+  synergy: "#2f7d32",
+  suppression: "#7a2e8f",
+};
+
+/** The negative end of each palette: negative synergy, negative suppression. */
+const NEGATIVE: Record<Palette, string> = {
+  synergy: "#b3261e",
+  suppression: "#1c7a5e",
+};
+
+/** Parse a `#rrggbb` colour into its channels. */
+function channels(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+/** Render channels as a `#rrggbb` colour. */
+function hex(r: number, g: number, b: number): string {
+  const part = (v: number) =>
+    Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+/**
+ * A colour scale centred on zero, for a value in a known range. `hue`
+ * selects the palette so the two measures on the page, which are in
+ * different units, cannot be read as the same scale. Zero maps to a
+ * neutral grey in both palettes; positive values interpolate towards the
+ * palette's positive colour, negative towards its negative one,
+ * saturating at `max`. Out-of-range values are clamped.
+ */
+export function divergingColor(value: number, max: number, hue: Palette): string {
+  if (!Number.isFinite(value) || max <= 0) return NEUTRAL;
+  const clamped = Math.max(-max, Math.min(max, value));
+  const target = clamped >= 0 ? POSITIVE[hue] : NEGATIVE[hue];
+  const [nr, ng, nb] = channels(NEUTRAL);
+  const [tr, tg, tb] = channels(target);
+  const strength = Math.abs(clamped) / max;
+  return hex(
+    nr + (tr - nr) * strength,
+    ng + (tg - ng) * strength,
+    nb + (tb - nb) * strength,
+  );
+}
+
+/**
+ * The text colour that stays readable on `fill`. Chosen by the fill's
+ * relative luminance rather than by comparing the fill to the neutral
+ * grey: the colour scale interpolates, so a small value lands on a fill
+ * only slightly off neutral, and white text on it is unreadable.
+ */
+export function readableTextColour(fill: string): string {
+  const luminance = relativeLuminance(fill);
+  // The crossover is where dark and light text have equal contrast
+  // against the fill: (L + 0.05)^2 = 1.05 * (0.033 + 0.05).
+  return luminance > 0.245 ? "#333333" : "#ffffff";
+}
+
+/**
+ * The colour that carries a value's sign, at full strength.
+ *
+ * The diverging scale fades towards neutral as a value approaches zero,
+ * which is right for a bar whose length already carries the magnitude.
+ * A headline number has no such length, so it takes the palette's full
+ * colour: a small positive rating still reads as positive.
+ *
+ * A value of zero has no sign, so there is no colour and the caller
+ * keeps its own.
+ */
+export function signColour(value: number, hue: Palette): string | undefined {
+  if (!Number.isFinite(value) || value === 0) return undefined;
+  return value > 0 ? POSITIVE[hue] : NEGATIVE[hue];
+}
+
+/** The relative luminance of a `#rrggbb` colour, from 0 to 1. */
+function relativeLuminance(hexColor: string): number {
+  const [r, g, b] = channels(hexColor);
+  const linear = [r, g, b].map((value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+}
+
+/** One cell of the roster-vs-roster heatmap. */
+export type HeatmapCell = {
+  rowLabel: string;
+  columnLabel: string;
+  value: number;
+  /** How many player pairs back the cell. */
+  pairCount: number;
+};
+
+/** Render the heatmap as an SVG string. */
+export function heatmapSvg(
+  cells: HeatmapCell[],
+  options: { max: number; title: string },
+): string {
+  const rows = [...new Set(cells.map((c) => c.rowLabel))];
+  const columns = [...new Set(cells.map((c) => c.columnLabel))];
+  const cellWidth = 96;
+  const cellHeight = 62;
+  const left = 132;
+  const top = 96;
+  const width = left + columns.length * cellWidth + 24;
+  const height = top + rows.length * cellHeight + 40;
+
+  const parts: string[] = [];
+  // No xmlns attribute: inline SVG in an HTML document is placed in the
+  // SVG namespace by the parser, and the page must contain no http
+  // reference at all.
+  parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
+  parts.push(`<text x="16" y="30" font-size="17" font-weight="600">${escapeXml(options.title)}</text>`);
+  parts.push(
+    `<text x="16" y="52" font-size="12" fill="#555">suppression, salary per weighted point. Negative means the player on the row has earned less against the player on the column than against a typical opponent.</text>`,
+  );
+
+  for (const [index, column] of columns.entries()) {
+    parts.push(
+      `<text x="${left + index * cellWidth + cellWidth / 2}" y="${top - 10}" font-size="12" text-anchor="middle">${escapeXml(column)}</text>`,
+    );
+  }
+
+  for (const [rowIndex, row] of rows.entries()) {
+    parts.push(
+      `<text x="${left - 12}" y="${top + rowIndex * cellHeight + cellHeight / 2 + 4}" font-size="12" text-anchor="end">${escapeXml(row)}</text>`,
+    );
+  }
+
+  for (const cell of cells) {
+    const rowIndex = rows.indexOf(cell.rowLabel);
+    const columnIndex = columns.indexOf(cell.columnLabel);
+    if (rowIndex < 0 || columnIndex < 0) continue;
+    const x = left + columnIndex * cellWidth;
+    const y = top + rowIndex * cellHeight;
+    const fill = divergingColor(cell.value, options.max, "suppression");
+    const text = readableTextColour(fill);
+    parts.push(
+      `<rect x="${x}" y="${y}" width="${cellWidth}" height="${cellHeight}" fill="${fill}" stroke="#ffffff" stroke-width="1"/>`,
+    );
+    parts.push(
+      `<text x="${x + cellWidth / 2}" y="${y + cellHeight / 2 - 2}" font-size="14" text-anchor="middle" fill="${text}">${escapeXml(formatNumber(cell.value))}</text>`,
+    );
+    parts.push(
+      `<text x="${x + cellWidth / 2}" y="${y + cellHeight / 2 + 14}" font-size="10" text-anchor="middle" fill="${text}" opacity="0.85">${cell.pairCount} pairs</text>`,
+    );
+  }
+
+  parts.push("</svg>");
+  return parts.join("");
+}
+
+/**
+ * One team rating, drawn as a labelled bar on a shared scale. The bar
+ * runs from `-max` to `+max` with a visible zero line, so a negative
+ * rating reads as negative rather than as a short bar.
+ */
+export function ratingBarSvg(input: {
+  label: string;
+  value: number;
+  max: number;
+  /** The line under the label: the sample size, and any change. */
+  note: string;
+  pairCount: number;
+}): string {
+  const width = 520;
+  const height = 54;
+  const left = 190;
+  const barWidth = 280;
+  const mid = left + barWidth / 2;
+  const value = Number.isFinite(input.value) ? input.value : 0;
+  const max = input.max > 0 ? input.max : 1;
+  const clamped = Math.max(-max, Math.min(max, value));
+  const barWidthUsed = (Math.abs(clamped) / max) * (barWidth / 2);
+  const fill = divergingColor(value, max, "synergy");
+
+  const parts: string[] = [];
+  parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
+  parts.push(
+    `<text x="0" y="22" font-size="13" font-weight="600">${escapeXml(input.label)}</text>`,
+  );
+  parts.push(
+    `<text x="0" y="40" font-size="11" fill="#555">${escapeXml(input.note)}</text>`,
+  );
+  parts.push(`<rect x="${left}" y="12" width="${barWidth}" height="24" fill="#f1f1ef"/>`);
+  parts.push(
+    `<rect x="${clamped >= 0 ? mid : mid - barWidthUsed}" y="12" width="${barWidthUsed}" height="24" fill="${fill}"/>`,
+  );
+  parts.push(`<line x1="${mid}" y1="8" x2="${mid}" y2="40" stroke="#333" stroke-width="1"/>`);
+  // The label sits just past the end of the bar, on whichever side the
+  // bar points, so a negative rating is labelled beside its own bar.
+  const labelX = clamped >= 0 ? mid + barWidthUsed + 8 : mid - barWidthUsed - 8;
+  const anchor = clamped >= 0 ? "start" : "end";
+  parts.push(
+    `<text x="${labelX}" y="29" font-size="13" font-weight="600" text-anchor="${anchor}" fill="#333">${escapeXml(formatNumber(value))}</text>`,
+  );
+  parts.push("</svg>");
+  return parts.join("");
+}
+
+/**
+ * A player's excess with each teammate, as a small labelled bar chart.
+ * Each bar is zero-centred, so a negative excess reads to the left.
+ */
+export function playerChemistrySvg(input: {
+  playerName: string;
+  teammates: { name: string; excess: number; sharedPoints: number }[];
+}): string {
+  const rowHeight = 26;
+  const width = 460;
+  const labelWidth = 150;
+  const barArea = 190;
+  // A player with no qualifying teammate still needs a row to hold the
+  // explanation, or the text falls outside the viewBox and is clipped.
+  const rows = Math.max(1, input.teammates.length);
+  const height = 48 + rows * rowHeight;
+  const mid = labelWidth + barArea / 2;
+  const max = Math.max(
+    1,
+    ...input.teammates.map((t) => Math.abs(Number.isFinite(t.excess) ? t.excess : 0)),
+  );
+
+  const parts: string[] = [];
+  parts.push(`<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`);
+  parts.push(`<text x="0" y="16" font-size="13" font-weight="600">${escapeXml(input.playerName)}</text>`);
+  parts.push(
+    `<text x="0" y="30" font-size="10" fill="#555">synergy, salary excess per shared point, shared points in brackets</text>`,
+  );
+
+  if (input.teammates.length === 0) {
+    // A player who never shared a qualifying line with this roster says
+    // so, rather than leaving an empty chart that reads as a rendering
+    // fault.
+    parts.push(
+      `<text x="0" y="${48 + rowHeight / 2}" font-size="11" fill="#555">never shared a qualifying line with a teammate on this roster</text>`,
+    );
+  }
+
+  input.teammates.forEach((teammate, index) => {
+    const y = 44 + index * rowHeight;
+    const excess = Number.isFinite(teammate.excess) ? teammate.excess : 0;
+    const barWidthUsed = (Math.abs(excess) / max) * (barArea / 2);
+    const fill = divergingColor(excess, max, "synergy");
+    parts.push(
+      `<text x="${labelWidth - 8}" y="${y + 12}" font-size="11" text-anchor="end">${escapeXml(teammate.name)}</text>`,
+    );
+    parts.push(`<line x1="${mid}" y1="${y + 3}" x2="${mid}" y2="${y + 17}" stroke="#999" stroke-width="1"/>`);
+    parts.push(
+      `<rect x="${excess >= 0 ? mid : mid - barWidthUsed}" y="${y + 5}" width="${barWidthUsed}" height="11" fill="${fill}"/>`,
+    );
+    parts.push(
+      `<text x="${labelWidth + barArea + 12}" y="${y + 13}" font-size="11">${escapeXml(formatMoney(excess))} (${teammate.sharedPoints})</text>`,
+    );
+  });
+
+  parts.push("</svg>");
+  return parts.join("");
+}
+
+/**
+ * A number for the page: one decimal place, with no trailing `.0` on
+ * whole numbers beyond the first decimal.
+ */
+export function formatNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/**
+ * A money amount: a dollar sign, thousands separators, and cents only
+ * when the amount is not a whole number of dollars.
+ *
+ * The minus sign goes outside the dollar sign, so a negative amount
+ * reads `-$233.40` rather than `$-233.40`.
+ */
+export function formatMoney(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  // Rounding goes through the decimal string rather than a multiplication,
+  // because a value like 1.005 is stored as 1.00499999999999989 and
+  // multiplying it by 100 rounds it down. The magnitude is rounded first so
+  // that a negative amount rounds away from zero, not towards it.
+  const magnitude = Math.abs(value);
+  const cents =
+    magnitude < 1e15 ? Math.round(Number(`${magnitude}e2`)) / 100 : magnitude;
+  const negative = value < 0 && cents !== 0;
+  const [whole, fraction] = cents.toFixed(2).split(".");
+  const grouped = groupThousands(whole!);
+  const body = fraction === "00" ? grouped : `${grouped}.${fraction}`;
+  return `${negative ? "-" : ""}$${body}`;
+}
+
+/**
+ * A money amount with its sign: `+$949`, `-$3,172`.
+ *
+ * Used where two figures are compared and the sign is the difference
+ * between them.
+ */
+export function signedMoney(value: number): string {
+  if (!Number.isFinite(value)) return "$0";
+  return value > 0 ? `+${formatMoney(value)}` : formatMoney(value);
+}
+
+/** Group a run of digits into thousands: `5802` becomes `5,802`. */
+function groupThousands(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}

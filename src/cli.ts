@@ -13,8 +13,9 @@ import {
 } from "./query/pairs.js";
 import { opponentEffects } from "./query/opponents.js";
 import { evaluateTeam } from "./query/teams.js";
+import { buildPreview } from "./preview/index.js";
 import { playerIdFor } from "./store/baselines.js";
-import { openDb, storeFileState, type Db } from "./store/db.js";
+import { openDb, openExistingDb, storeFileState, type Db } from "./store/db.js";
 import { ingestLeagues } from "./store/ingest.js";
 
 /**
@@ -62,9 +63,10 @@ const USAGE = [
   "  parity-synergy opponents <player> [--min-points 5] [--db <path>]",
   '  parity-synergy evaluate --team "A,B,C,D,E,F" [--db <path>]',
   "  parity-synergy export-csv --table pair_effects --out pairs.csv [--db <path>]",
+  "  parity-synergy preview --out preview.html [--league 25] [--db <path>] [--base-url <url>]",
 ];
 
-const COMMANDS = ["ingest", "leaderboard", "pair", "opponents", "evaluate", "export-csv"];
+const COMMANDS = ["ingest", "leaderboard", "pair", "opponents", "evaluate", "export-csv", "preview"];
 
 /**
  * The tables `export-csv` may name. This name is the one value in the CLI
@@ -118,6 +120,7 @@ const ALLOWED_FLAGS: Record<string, string[]> = {
   opponents: ["min-points", "db"],
   evaluate: ["team", "db"],
   "export-csv": ["table", "out", "db"],
+  preview: ["out", "league", "db", "base-url"],
 };
 
 /**
@@ -483,6 +486,38 @@ async function cmdExportCsv(parsed: ParsedArgs, deps: ResolvedDeps, out: string[
   return 0;
 }
 
+/**
+ * `preview --out <path>`: build the team preview page from the store and
+ * the league's live rosters, and write it as one self-contained HTML
+ * file. The base URL is printed so a run against the wrong API is
+ * visible in the output.
+ */
+async function cmdPreview(parsed: ParsedArgs, deps: ResolvedDeps, out: string[]): Promise<number> {
+  const outPath = flagString(parsed, "out");
+  if (outPath === undefined) throw new CliError("preview requires --out <path>");
+  const leagueId = flagInteger(parsed, "league", 25);
+  const baseUrl = resolveBaseUrl(parsed, process.env);
+  const result = await buildPreview({
+    db: deps.db,
+    baseUrl,
+    leagueId,
+    outPath,
+  });
+  out.push(`base url: ${baseUrl}`);
+  out.push(`league: ${leagueId}`);
+  out.push(`wrote ${result.teamCount} teams to ${result.outPath} (${result.byteLength} bytes)`);
+  // The history is the report's memory: it says whether this run
+  // recorded a new figure or just re-rendered.
+  if (result.recorded === "season_opening") {
+    out.push("recorded the season-opening figures for this league");
+  } else if (result.recorded === "ingest") {
+    out.push("recorded new figures; the comparison now reads change since last game");
+  } else {
+    out.push("no new games since the last report; the comparison is unchanged");
+  }
+  return 0;
+}
+
 /** Run one validated subcommand against the resolved store. */
 async function dispatch(
   command: string,
@@ -504,6 +539,8 @@ async function dispatch(
       return cmdEvaluate(parsed, deps, out, err);
     case "export-csv":
       return cmdExportCsv(parsed, deps, out);
+    case "preview":
+      return cmdPreview(parsed, deps, out);
     default:
       // Unreachable: `run` validates the subcommand before dispatching.
       throw new CliError(`Unknown subcommand: ${command}`);
@@ -547,6 +584,14 @@ export async function run(args: string[], deps: CliDeps): Promise<CliResult> {
     let db: Db;
     if (deps.db !== undefined && dbPath === undefined) {
       db = deps.db;
+    } else if (subcommand === "preview") {
+      // The preview writes its own history table, so it needs a
+      // read-write handle, but it must not run the migration: that
+      // rewrites the game's effect views, and the feature only reads
+      // them.
+      const store = storeFileState(dbPath);
+      db = owned = openExistingDb(dbPath);
+      if (!store.existed) out.push(`created a new empty store at ${store.path}`);
     } else {
       // Recorded before the open: afterwards a file that was not there is
       // indistinguishable from one that always was.

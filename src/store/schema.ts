@@ -1,6 +1,6 @@
 import type { Db } from "./db.js";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * The `pair_effects` view: one row per unordered teammate pair, with the
@@ -394,11 +394,17 @@ FROM deltas;
 `;
 
 /**
- * The full DDL for schema version 1. Every table and index statement uses
+ * The full DDL for schema version 2. Every table and index statement uses
  * `IF NOT EXISTS`, so re-running is safe; the two effect views drop and
  * recreate themselves, which is SQLite's equivalent of `CREATE OR REPLACE
  * VIEW`. `PRAGMA foreign_keys` is intentionally absent: `openDb` sets it
  * with `db.pragma("foreign_keys = ON")` on the connection.
+ *
+ * `games.game_id` is the store's own integer id and `games.external_id` is
+ * the id the API reports, which is a number for the older leagues and a
+ * UUID for the newer ones. The external id is unique within a league.
+ * `ingest_log.external_id` records the same id, and `ingest_log.game_id` is
+ * empty for a rejected game, which has no stored game to point at.
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -416,7 +422,8 @@ CREATE TABLE IF NOT EXISTS games (
   home_score INTEGER NOT NULL,
   away_score INTEGER NOT NULL,
   salary_rules_version INTEGER NOT NULL,
-  imported_at TEXT NOT NULL
+  imported_at TEXT NOT NULL,
+  external_id TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS players (
@@ -490,10 +497,11 @@ CREATE TABLE IF NOT EXISTS player_baselines (
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
-  game_id INTEGER NOT NULL,
+  game_id INTEGER,
   status TEXT NOT NULL CHECK (status IN ('ok','rejected')),
   reason TEXT,
-  checked_at TEXT NOT NULL
+  checked_at TEXT NOT NULL,
+  external_id TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_appearances_player ON appearances(player_id);
@@ -507,14 +515,81 @@ ${OPPONENT_EFFECTS_VIEW_SQL}
 `;
 
 /**
+ * The column names of a table, read from the table itself rather than from
+ * the schema version, so a store written by an older build is recognised by
+ * what it holds.
+ */
+function columnsOf(db: Db, table: string): Array<{ name: string; notnull: number }> {
+  return db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+}
+
+/**
+ * Bring a store written before the API reported UUID game ids up to the
+ * current schema.
+ *
+ * The games table gains the API's own id, which for the older leagues is
+ * the number the game already had. SQLite cannot add a NOT NULL column to a
+ * table that holds rows without a default, so the added column keeps a
+ * default of the empty string; every row is backfilled straight after, and
+ * every write names the column.
+ *
+ * The ingest log is rebuilt rather than altered: a rejected game has no
+ * stored game, so its log row leaves the store's game id empty, and SQLite
+ * cannot drop a NOT NULL constraint from an existing column. The rebuild
+ * copies every row, in its original order, and backfills the API's id.
+ *
+ * The unique index over the league and the external id is made here rather
+ * than in the DDL, because the DDL runs before the column is added to an
+ * older store and would fail on the missing column.
+ */
+function migrateExternalIds(db: Db): void {
+  const gameColumns = columnsOf(db, "games");
+  if (!gameColumns.some((column) => column.name === "external_id")) {
+    db.exec("ALTER TABLE games ADD COLUMN external_id TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE games SET external_id = CAST(game_id AS TEXT)");
+  }
+
+  const logColumns = columnsOf(db, "ingest_log");
+  const hasExternalId = logColumns.some((column) => column.name === "external_id");
+  const gameIdRequired = logColumns.some(
+    (column) => column.name === "game_id" && column.notnull === 1,
+  );
+  if (!hasExternalId || gameIdRequired) {
+    const externalId = hasExternalId ? "external_id" : "CAST(game_id AS TEXT)";
+    db.exec(
+      `CREATE TABLE ingest_log_v2 (
+         game_id INTEGER,
+         status TEXT NOT NULL CHECK (status IN ('ok','rejected')),
+         reason TEXT,
+         checked_at TEXT NOT NULL,
+         external_id TEXT NOT NULL
+       );
+       INSERT INTO ingest_log_v2 (game_id, status, reason, checked_at, external_id)
+         SELECT game_id, status, reason, checked_at, ${externalId} FROM ingest_log ORDER BY rowid;
+       DROP TABLE ingest_log;
+       ALTER TABLE ingest_log_v2 RENAME TO ingest_log;`,
+    );
+  }
+
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_games_external ON games(league_id, external_id)",
+  );
+}
+
+/**
  * Apply the schema to `db` and record the schema version, atomically: the
- * DDL and the version upsert share one transaction, so a mid-exec failure
- * cannot leave partial DDL applied with no version row. Safe to run
- * repeatedly: the DDL uses `IF NOT EXISTS` and the version row upserts.
+ * DDL, the column migration and the version upsert share one transaction, so
+ * a mid-exec failure cannot leave partial DDL applied with no version row.
+ * Safe to run repeatedly: the DDL uses `IF NOT EXISTS`, the migration checks
+ * for the columns it adds, and the version row upserts.
  */
 export function migrate(db: Db): void {
   const apply = db.transaction(() => {
     db.exec(SCHEMA_SQL);
+    migrateExternalIds(db);
     db.prepare(
       "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(String(SCHEMA_VERSION));

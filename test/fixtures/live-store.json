@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-11-10T00:20:45.164Z",
+  "store": {
+    "games": 338,
+    "points": 13555,
+    "players": 340,
+    "appearances": 162914
+  },
+  "stats": {
+    "correlationWithPointDiff": -0.187446,
+    "correlationWithSharedPoints": -0.32439,
+    "medianGameMargin": 4,
+    "gamesDecidedByThreeOrFewer": 157
+  }
+}

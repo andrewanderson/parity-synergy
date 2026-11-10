@@ -5,10 +5,19 @@ import type { Db } from "./db.js";
 import { reconcileSalary, reconcilePointStats } from "../verify/reconcile.js";
 import { writeGameFacts } from "./facts.js";
 import { recomputeBaselines } from "./baselines.js";
+import {
+  normalizeExternalGameId,
+  resolveGameId,
+  type ExternalGameId,
+} from "./gameIds.js";
 
 /** The result of ingesting one game: stored and verified, or rejected. */
 export type IngestOutcome = {
-  gameId: number;
+  /**
+   * The game's id as the API reports it: a number for the older leagues, a
+   * UUID for the newer ones.
+   */
+  gameId: ExternalGameId;
   leagueId: number;
   status: "ok" | "rejected";
   reason?: string;
@@ -25,12 +34,20 @@ export type IngestOptions = {
  * Record a rejected game outside the facts transaction, so a rejection
  * leaves no partial rows: only the log line exists. `writeGameFacts` never
  * writes a rejection, so this is the only place one is recorded.
+ *
+ * A rejected game has no stored game, so the log names it by the API's own
+ * id and leaves the store's id empty. Claiming an id that another game may
+ * take later would make the log point at the wrong game.
  */
-function recordRejection(db: Db, gameId: number, reason: string): void {
+function recordRejection(
+  db: Db,
+  externalId: string,
+  reason: string,
+): void {
   db.prepare(
-    `INSERT INTO ingest_log (game_id, status, reason, checked_at)
-     VALUES (?, 'rejected', ?, ?)`,
-  ).run(gameId, reason, new Date().toISOString());
+    `INSERT INTO ingest_log (game_id, status, reason, checked_at, external_id)
+     VALUES (NULL, 'rejected', ?, ?, ?)`,
+  ).run(reason, new Date().toISOString(), externalId);
 }
 
 /**
@@ -53,26 +70,34 @@ export async function ingestGame(
   db: Db,
   source: DataSource,
   leagueId: number,
-  gameId: number,
+  externalGameId: ExternalGameId,
 ): Promise<IngestOutcome> {
-  const payload = await source.getGame({ id: leagueId }, gameId);
+  const gameId = normalizeExternalGameId(externalGameId);
+  // The store's own id for the game. A game the API identifies by UUID has
+  // no id of its own that can key an integer column, so the store gives it
+  // one and records the API's id beside it.
+  const internalGameId = resolveGameId(db, leagueId, gameId);
+
+  // The API is asked for the game by the id it reported, not by the
+  // normalised one: the normalisation is for the store's own keys.
+  const payload = await source.getGame({ id: leagueId }, externalGameId);
   const full = assembleFullGame(payload);
   const pointStats = buildPointStats(payload);
 
   const salaryCheck = reconcileSalary(payload, full.salaryLedger);
   if (!salaryCheck.ok) {
-    recordRejection(db, gameId, salaryCheck.reason);
+    recordRejection(db, String(gameId), salaryCheck.reason);
     return { gameId, leagueId, status: "rejected", reason: salaryCheck.reason };
   }
 
   const statsCheck = reconcilePointStats(payload, pointStats);
   if (!statsCheck.ok) {
-    recordRejection(db, gameId, statsCheck.reason);
+    recordRejection(db, String(gameId), statsCheck.reason);
     return { gameId, leagueId, status: "rejected", reason: statsCheck.reason };
   }
 
   const commit = db.transaction((): void => {
-    const playerIds = writeGameFacts(db, full, pointStats);
+    const playerIds = writeGameFacts(db, full, pointStats, internalGameId);
     recomputeBaselines(db, playerIds);
   });
   commit();
@@ -92,10 +117,15 @@ export async function ingestLeagues(options: IngestOptions): Promise<IngestOutco
   const outcomes: IngestOutcome[] = [];
   for (const leagueId of [...leagues].sort((a, b) => a - b)) {
     const games = await source.listGames({ id: leagueId });
-    for (const game of games) {
-      // The API reports game ids as JSON strings despite `ApiGame.id` being
-      // typed `number`; coerce here so the outcome carries a real number.
-      const outcome = await ingestGame(db, source, leagueId, Number(game.id));
+    // A league's games are stored in week order, whatever order the API
+    // lists them in: the store's ids are chronological, and the rating
+    // windows read them as one.
+    const ordered = [...games].sort((a, b) => a.week - b.week);
+    for (const game of ordered) {
+      // The API reports game ids as strings: the older leagues as a run of
+      // digits, the newer ones as a UUID. Either way the id is kept as the
+      // API reported it, and the store gives the game an id of its own.
+      const outcome = await ingestGame(db, source, leagueId, game.id);
       outcomes.push(outcome);
       onProgress?.(outcome);
     }
