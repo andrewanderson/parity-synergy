@@ -13,6 +13,8 @@
     "mcp": "node dist/mcp/index.js",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "repin:live": "tsx scripts/repin-live-snapshot.ts",
     "type-check": "tsc --noEmit",
     "ingest": "tsx src/cli.ts ingest"
   },
